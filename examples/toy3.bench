@@ -1,0 +1,9 @@
+# toy3: XOR-based parity
+INPUT(a)
+INPUT(b)
+INPUT(c)
+
+n1 = XOR(a, b)
+out = XOR(n1, c)
+
+OUTPUT(out)

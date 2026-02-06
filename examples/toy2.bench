@@ -1,0 +1,8 @@
+# toy2: redundancy causes untestable fault on n1
+INPUT(a)
+INPUT(b)
+
+n1 = AND(a, b)
+out = OR(n1, a)
+
+OUTPUT(out)

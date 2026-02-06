@@ -1,0 +1,2 @@
+\section{Implementation}
+The implementation is organized into modular Python components: a .bench parser, a circuit data model with topological ordering, a five-valued logic evaluator, and the PODEM core (objective, backtrace, imply, D-frontier computation, and backtracking). The fault model enforces gate-output nets only. A command-line interface exposes \texttt{python -m atpg run} with JSON or human-readable output, and a Makefile automates environment setup, testing, example runs, and report generation.
