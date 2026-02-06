@@ -1,3 +1,4 @@
+.RECIPEPREFIX := >
 SHELL := /bin/bash
 .ONESHELL:
 .SHELLFLAGS := -eu -o pipefail -c
@@ -8,96 +9,62 @@ PIP := $(VENV)/bin/pip
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install test lint run examples report clean
+.PHONY: help venv install check-venv test lint run examples report clean
 
 help:
-	@echo "Targets:"
-	@echo "  venv      - create virtual environment"
-	@echo "  install   - install dependencies"
-	@echo "  test      - run pytest"
-	@echo "  lint      - run ruff"
-	@echo "  run       - run default example"
-	@echo "  examples  - run example faults"
-	@echo "  report    - build report/report.pdf"
-	@echo "  clean     - remove build artifacts"
+>@echo "Targets:"
+>@echo "  venv      - create virtual environment"
+>@echo "  install   - install dependencies"
+>@echo "  test      - run pytest"
+>@echo "  lint      - run ruff"
+>@echo "  run       - run default example"
+>@echo "  examples  - run example faults"
+>@echo "  report    - build report/report.pdf"
+>@echo "  clean     - remove build artifacts"
 
 venv:
-	python3 -m venv $(VENV)
+>python3 -m venv $(VENV)
 
 install: venv
-	$(PIP) install -r requirements.txt
+>$(PIP) install -r requirements.txt
 
-test:
-	$(PY) -m pytest -v
+check-venv:
+>@test -x "$(PY)" || (echo "Virtualenv missing. Run: make install"; exit 1)
 
-lint:
-	$(PY) -m ruff check .
+test: check-venv
+>$(PY) -m pytest -v
 
-run:
-	@mkdir -p artifacts
-	$(PY) -m atpg run --netlist examples/toy1.bench --fault n1/SA0 > artifacts/run.txt
+lint: check-venv
+>$(PY) -m ruff check .
 
-examples:
-	@mkdir -p artifacts
-	$(PY) -m atpg run --netlist examples/toy1.bench --fault n1/SA0 --json > artifacts/toy1_n1_SA0.json
-	$(PY) -m atpg run --netlist examples/toy1.bench --fault n1/SA1 --json > artifacts/toy1_n1_SA1.json
-	$(PY) -m atpg run --netlist examples/toy2.bench --fault n1/SA0 --json > artifacts/toy2_n1_SA0.json
-	$(PY) -m atpg run --netlist examples/toy3.bench --fault n1/SA0 --json > artifacts/toy3_n1_SA0.json
-	$(PY) - <<-'PY'
-		import json
-		from pathlib import Path
+run: check-venv
+>mkdir -p artifacts
+>$(PY) -m atpg run --netlist examples/toy1.bench --fault n1/SA0 > artifacts/run.txt
 
-		outputs = []
-		for path in sorted(Path("artifacts").glob("*.json")):
-		    data = json.loads(path.read_text())
-		    outputs.append({
-		        "file": path.name,
-		        "status": data["status"],
-		        "test_vector": ", ".join(f"{k}={v}" for k, v in data["test_vector"].items()),
-		    })
-		Path("artifacts/results.json").write_text(json.dumps(outputs, indent=2))
-	PY
+examples: check-venv
+>mkdir -p artifacts
+>$(PY) -m atpg run --netlist examples/toy1.bench --fault n1/SA0 --json > artifacts/toy1_n1_SA0.json
+>$(PY) -m atpg run --netlist examples/toy1.bench --fault n1/SA1 --json > artifacts/toy1_n1_SA1.json
+>$(PY) -m atpg run --netlist examples/toy2.bench --fault n1/SA0 --json > artifacts/toy2_n1_SA0.json
+>$(PY) -m atpg run --netlist examples/toy3.bench --fault n1/SA0 --json > artifacts/toy3_n1_SA0.json
+>PYTHONPATH=. $(PY) -m scripts.run_faults --netlists examples/toy1.bench examples/toy2.bench examples/toy3.bench
+>$(PY) scripts/summarize_results.py
+
 
 report: examples
-	@mkdir -p report/artifacts
-	$(PY) - <<-'PY'
-		import json
-		from pathlib import Path
+>test -d report || (echo "report/ directory missing."; exit 1)
+>test -f report/main.tex || (echo "report/main.tex not found."; exit 1)
+>mkdir -p report/artifacts
+>$(PY) scripts/render_results_tex.py
+>$(PY) scripts/render_trace_tex.py
+>$(PY) scripts/render_fault_sweep_tex.py
+>command -v pdflatex >/dev/null 2>&1 || (echo "pdflatex not found; cannot build report."; exit 1)
+>cd report
+>pdflatex -interaction=nonstopmode -halt-on-error main.tex >/dev/null
+>pdflatex -interaction=nonstopmode -halt-on-error main.tex >/dev/null
 
-		results_path = Path("artifacts/results.json")
-		if not results_path.exists():
-		    raise SystemExit("Run 'make examples' first to generate results.json")
-
-		rows = json.loads(results_path.read_text())
-		lines = [
-		    "\\begin{table}[h]",
-		    "\\centering",
-		    "\\begin{tabular}{llll}",
-		    "\\toprule",
-		    "Netlist & Fault & Status & Test Vector \\\\",
-		    "\\midrule",
-		]
-		for row in rows:
-		    parts = row["file"].replace(".json", "").split("_")
-		    netlist = parts[0]
-		    fault = f"{parts[1]}/{parts[2]}"
-		    status = row["status"]
-		    vector = row["test_vector"]
-		    lines.append(f"{netlist} & {fault} & {status} & {vector} \\\\")
-		lines.extend([
-		    "\\bottomrule",
-		    "\\end{tabular}",
-		    "\\caption{Example ATPG results.}",
-		    "\\label{tab:results}",
-		    "\\end{table}",
-		])
-		Path("report/artifacts/results.tex").write_text("\n".join(lines))
-	PY
-	@command -v pdflatex >/dev/null 2>&1 || (echo "pdflatex not found; cannot build report."; exit 1)
-	cd report && pdflatex -interaction=nonstopmode -halt-on-error main.tex >/dev/null
-	cd report && pdflatex -interaction=nonstopmode -halt-on-error main.tex >/dev/null
 
 clean:
-	@rm -rf $(VENV) .pytest_cache __pycache__ artifacts
-	@rm -f report/*.aux report/*.log report/*.out report/*.pdf
-	@rm -rf report/artifacts
+>rm -rf $(VENV) .pytest_cache __pycache__ artifacts
+>rm -f report/*.aux report/*.log report/*.out report/*.pdf
+>rm -rf report/artifacts

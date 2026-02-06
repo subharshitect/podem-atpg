@@ -9,29 +9,29 @@ from pathlib import Path
 def main() -> None:
     results_path = Path("artifacts/results.json")
     if not results_path.exists():
-        raise SystemExit("Run 'make examples' first to generate results.json")
+        raise SystemExit("Run 'make examples' first to generate artifacts/results.json")
 
     rows = json.loads(results_path.read_text())
     lines = [
         "\\begin{table}[h]",
         "\\centering",
-        "\\begin{tabular}{llll}",
+        "\\begin{tabular}{lllll}",
         "\\toprule",
-        "Netlist & Fault & Status & Test Vector \\\\",
+        "Netlist & Net & Fault & Status & Depth \\\\",
         "\\midrule",
     ]
-    for row in rows:
-        parts = row["file"].replace(".json", "").split("_")
-        netlist = parts[0]
-        fault = f"{parts[1]}/{parts[2]}"
-        status = row["status"]
-        vector = row["test_vector"]
-        lines.append(f"{netlist} & {fault} & {status} & {vector} \\\\")
+    for r in rows:
+        netlist = r.get("netlist", "?")
+        net = r.get("net", "?")
+        fault = r.get("fault", "?")
+        status = r.get("status", "?")
+        depth = r.get("depth", "")
+        lines.append(f"{netlist} & {net} & {fault} & {status} & {depth} \\\\")
     lines.extend(
         [
             "\\bottomrule",
             "\\end{tabular}",
-            "\\caption{Example ATPG results.}",
+            "\\caption{ATPG results across example netlists and gate-output stuck-at faults.}",
             "\\label{tab:results}",
             "\\end{table}",
         ]

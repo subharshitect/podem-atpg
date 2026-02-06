@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import json
-from typing import Any, Dict
+from typing import Any
 
 from .fault import Fault, FaultError
 from .parser_bench import BenchParseError, parse_bench_file
@@ -30,6 +29,11 @@ def _run_command(args: argparse.Namespace) -> int:
         max_depth=args.max_depth,
         verbose=args.verbose,
     )
+
+    if args.verbose and result.trace and not args.json:
+        for line in result.trace:
+            print(line)
+            print()
 
     if args.json:
         print(result.to_json())

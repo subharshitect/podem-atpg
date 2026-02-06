@@ -1,239 +1,241 @@
-===== FILE: atpg/parser_bench.py =====
-"""Parser for simple .bench netlists."""
+===============================
+FILE: atpg/circuit.py
+===============================
+"""Circuit data structures and utilities."""
 
 from __future__ import annotations
 
-import re
-from typing import List, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
-from .circuit import Circuit, CircuitError, Gate, SUPPORTED_GATES
+from .logic5 import Logic5, GateEvalResult, evaluate_gate
 
 
-class BenchParseError(Exception):
+SUPPORTED_GATES = {"AND", "OR", "NAND", "NOR", "NOT", "BUF", "XOR", "XNOR"}
+
+
+@dataclass(frozen=True)
+class Gate:
+    gate_type: str
+    output: str
+    inputs: List[str]
+
+
+class CircuitError(Exception):
     pass
 
 
-_INPUT_RE = re.compile(r"^INPUT\(([^)]+)\)\s*$", re.IGNORECASE)
-_OUTPUT_RE = re.compile(r"^OUTPUT\(([^)]+)\)\s*$", re.IGNORECASE)
-_ASSIGN_RE = re.compile(r"^([^=]+)=\s*([A-Z]+)\(([^)]*)\)\s*$", re.IGNORECASE)
+class Circuit:
+    def __init__(self, gates: List[Gate], primary_inputs: List[str], primary_outputs: List[str]):
+        self.gates = gates
+        self.primary_inputs = primary_inputs
+        self.primary_outputs = primary_outputs
+        self.values: Dict[str, Logic5] = {}
+        self.gate_map: Dict[str, Gate] = {gate.output: gate for gate in gates}
+        self.topo_order: List[Gate] = self._topological_order()
+        self._init_values()
+
+    def _init_values(self) -> None:
+        nets = set(self.primary_inputs + self.primary_outputs)
+        for gate in self.gates:
+            nets.add(gate.output)
+            nets.update(gate.inputs)
+        self.values = {net: Logic5.X for net in nets}
+
+    def _topological_order(self) -> List[Gate]:
+        incoming: Dict[str, int] = {}
+        deps: Dict[str, List[Gate]] = {}
+        outputs = {gate.output for gate in self.gates}
+        for gate in self.gates:
+            incoming[gate.output] = sum(1 for inp in gate.inputs if inp in outputs)
+            for inp in gate.inputs:
+                deps.setdefault(inp, []).append(gate)
+
+        ready = [gate for gate in self.gates if incoming[gate.output] == 0]
+        order: List[Gate] = []
+
+        while ready:
+            gate = ready.pop()
+            order.append(gate)
+            for nxt in deps.get(gate.output, []):
+                incoming[nxt.output] -= 1
+                if incoming[nxt.output] == 0:
+                    ready.append(nxt)
+
+        if len(order) != len(self.gates):
+            raise CircuitError("Sequential or cyclic dependencies detected; only combinational circuits supported.")
+        return order
+
+    def reset(self) -> None:
+        for net in self.values:
+            self.values[net] = Logic5.X
+
+    def assign(self, net: str, value: Logic5, stack: List[tuple[str, Logic5]]) -> bool:
+        prev = self.values.get(net, Logic5.X)
+        if prev is value:
+            return True
+        if prev is not Logic5.X and value is not Logic5.X and prev is not value:
+            return False
+        stack.append((net, prev))
+        self.values[net] = value
+        return True
+
+    def evaluate_gate(self, gate: Gate, fault: Optional["Fault"]) -> Logic5:
+        inputs = [self.values[inp] for inp in gate.inputs]
+        result: GateEvalResult = evaluate_gate(gate.gate_type, inputs)
+        if fault is not None and gate.output == fault.net:
+            stuck = 0 if fault.stuck_at == 0 else 1
+            if result.good is None:
+                return Logic5.X
+            return Logic5.from_pair(result.good, stuck)
+        return result.to_logic5()
+
+    def fanin_values(self, gate: Gate) -> List[Logic5]:
+        return [self.values[name] for name in gate.inputs]
+
+    def set_pi(self, name: str, value: Logic5, stack: List[tuple[str, Logic5]]) -> bool:
+        if name not in self.primary_inputs:
+            raise CircuitError(f"Unknown primary input: {name}")
+        return self.assign(name, value, stack)
+
+    def get_value(self, net: str) -> Logic5:
+        return self.values.get(net, Logic5.X)
 
 
-def _clean_line(line: str) -> str:
-    line = line.split("#", 1)[0]
-    return line.strip()
+from .fault import Fault  # noqa: E402  # avoid circular import at runtime
 
 
-def parse_bench(text: str) -> Circuit:
-    primary_inputs: List[str] = []
-    primary_outputs: List[str] = []
-    gates: List[Gate] = []
 
-    for raw in text.splitlines():
-        line = _clean_line(raw)
-        if not line:
-            continue
-        if match := _INPUT_RE.match(line):
-            name = match.group(1).strip()
-            primary_inputs.append(name)
-            continue
-        if match := _OUTPUT_RE.match(line):
-            name = match.group(1).strip()
-            primary_outputs.append(name)
-            continue
-        if match := _ASSIGN_RE.match(line):
-            output = match.group(1).strip()
-            gate_type = match.group(2).strip().upper()
-            inputs = [item.strip() for item in match.group(3).split(",") if item.strip()]
-            if gate_type not in SUPPORTED_GATES:
-                raise BenchParseError(f"Unknown gate type: {gate_type}")
-            if gate_type in {"NOT", "BUF"} and len(inputs) != 1:
-                raise BenchParseError(f"Gate {gate_type} expects exactly one input")
-            if gate_type not in {"NOT", "BUF"} and len(inputs) < 2:
-                raise BenchParseError(f"Gate {gate_type} expects at least two inputs")
-            gates.append(Gate(gate_type=gate_type, output=output, inputs=inputs))
-            continue
-        raise BenchParseError(f"Unrecognized line: {raw}")
+===============================
+FILE: atpg/cli.py
+===============================
+"""Command line interface for ATPG."""
 
-    if not primary_outputs:
-        raise BenchParseError("No OUTPUT declarations found")
+from __future__ import annotations
 
-    return Circuit(gates=gates, primary_inputs=primary_inputs, primary_outputs=primary_outputs)
+import argparse
+from typing import Any
+
+from .fault import Fault, FaultError
+from .parser_bench import BenchParseError, parse_bench_file
+from .podem import podem
 
 
-def parse_bench_file(path: str) -> Circuit:
+def _run_command(args: argparse.Namespace) -> int:
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            text = handle.read()
-    except OSError as exc:
-        raise BenchParseError(f"Failed to read netlist: {exc}") from exc
-    return parse_bench(text)
+        circuit = parse_bench_file(args.netlist)
+        fault = Fault.parse(args.fault)
+    except (BenchParseError, FaultError, OSError, ValueError) as exc:
+        print(f"Error: {exc}")
+        return 2
 
-===== FILE: atpg/__init__.py =====
+    if fault.net not in circuit.gate_map:
+        print("Error: Fault must target a gate output net (not a primary input).")
+        return 2
+
+    result = podem(
+        circuit,
+        fault,
+        timeout_s=args.timeout_s,
+        max_depth=args.max_depth,
+        verbose=args.verbose,
+    )
+
+    if args.verbose and result.trace and not args.json:
+        for line in result.trace:
+            print(line)
+            print()
+
+    if args.json:
+        print(result.to_json())
+        return 0
+
+    print(f"Status: {result.status}")
+    if result.reason:
+        print(f"Reason: {result.reason}")
+    print("Test vector:")
+    for name, value in result.test_vector.items():
+        print(f"  {name}: {value.to_char()}")
+    if result.po_observations:
+        print("PO observations:")
+        for name, value in result.po_observations.items():
+            print(f"  {name}: {value.to_char()}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="PODEM-based ATPG for combinational circuits")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = sub.add_parser("run", help="Run PODEM ATPG")
+    run_parser.add_argument("--netlist", required=True, help="Path to .bench netlist")
+    run_parser.add_argument("--fault", required=True, help="Fault specification <net>/SA0 or <net>/SA1")
+    run_parser.add_argument("--timeout_s", type=float, default=None, help="Timeout in seconds")
+    run_parser.add_argument("--max_depth", type=int, default=None, help="Maximum recursion depth")
+    run_parser.add_argument("--verbose", action="store_true", help="Verbose output")
+    run_parser.add_argument("--json", action="store_true", help="Output JSON")
+    run_parser.set_defaults(func=_run_command)
+
+    return parser
+
+
+def main(argv: Any = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+
+===============================
+FILE: atpg/fault.py
+===============================
+"""Fault model definitions."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+class FaultError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Fault:
+    net: str
+    stuck_at: int
+
+    @classmethod
+    def parse(cls, text: str) -> "Fault":
+        try:
+            net, sa = text.split("/")
+        except ValueError as exc:
+            raise FaultError("Fault format must be <net>/SA0 or <net>/SA1") from exc
+        sa = sa.upper()
+        if sa not in {"SA0", "SA1"}:
+            raise FaultError("Fault format must be <net>/SA0 or <net>/SA1")
+        return cls(net=net.strip(), stuck_at=0 if sa == "SA0" else 1)
+
+
+
+===============================
+FILE: atpg/__init__.py
+===============================
 """ATPG package using the PODEM algorithm."""
 
 from .podem import podem
 
 __all__ = ["podem"]
 
-===== FILE: atpg/podem.py =====
-"""PODEM algorithm implementation."""
-
-from __future__ import annotations
-
-import time
-from typing import List, Optional, Tuple
-
-from .circuit import Circuit
-from .fault import Fault
-from .logic5 import Logic5, controlling_value, invert_value, non_controlling_value
-from .utils import PodemResult, vector_from_values
 
 
-class PodemAbort(Exception):
-    pass
-
-
-def check_test(circuit: Circuit) -> bool:
-    return any(circuit.get_value(po) in (Logic5.D, Logic5.DBAR) for po in circuit.primary_outputs)
-
-
-def compute_d_frontier(circuit: Circuit) -> List:
-    frontier = []
-    for gate in circuit.topo_order:
-        if circuit.get_value(gate.output) is not Logic5.X:
-            continue
-        if any(val in (Logic5.D, Logic5.DBAR) for val in circuit.fanin_values(gate)):
-            frontier.append(gate)
-    return frontier
-
-
-def objective(circuit: Circuit, fault: Fault) -> Tuple[str, Logic5]:
-    fault_value = circuit.get_value(fault.net)
-    if fault_value in (Logic5.X, Logic5.ZERO, Logic5.ONE):
-        desired = Logic5.ONE if fault.stuck_at == 0 else Logic5.ZERO
-        return fault.net, desired
-
-    frontier = compute_d_frontier(circuit)
-    if not frontier:
-        raise PodemAbort("D-frontier empty")
-    gate = frontier[0]
-    target_value = non_controlling_value(gate.gate_type)
-    for inp in gate.inputs:
-        if circuit.get_value(inp) is Logic5.X:
-            return inp, target_value or Logic5.X
-    raise PodemAbort("No X input in D-frontier gate")
-
-
-def backtrace(circuit: Circuit, net_name: str, desired_value: Logic5) -> Tuple[str, Logic5]:
-    if net_name in circuit.primary_inputs:
-        return net_name, desired_value
-    gate = circuit.gate_map.get(net_name)
-    if gate is None:
-        return net_name, desired_value
-
-    gate_type = gate.gate_type.upper()
-    inverted = gate_type in {"NAND", "NOR", "NOT", "XNOR"}
-    base_type = gate_type
-    if gate_type in {"NAND", "AND"}:
-        base_type = "AND"
-    elif gate_type in {"NOR", "OR"}:
-        base_type = "OR"
-    elif gate_type in {"XNOR", "XOR"}:
-        base_type = "XOR"
-
-    target = invert_value(desired_value) if inverted else desired_value
-
-    if base_type == "AND":
-        desired_in = Logic5.ONE if target is Logic5.ONE else Logic5.ZERO
-    elif base_type == "OR":
-        desired_in = Logic5.ZERO if target is Logic5.ZERO else Logic5.ONE
-    elif base_type == "XOR":
-        desired_in = target
-    else:
-        desired_in = target
-
-    for inp in gate.inputs:
-        if circuit.get_value(inp) is Logic5.X:
-            return backtrace(circuit, inp, desired_in)
-
-    return backtrace(circuit, gate.inputs[0], desired_in)
-
-
-def imply(circuit: Circuit, pi_name: str, pi_value: Logic5, fault: Fault, stack: List[tuple[str, Logic5]]) -> bool:
-    if not circuit.set_pi(pi_name, pi_value, stack):
-        return False
-    for gate in circuit.topo_order:
-        new_value = circuit.evaluate_gate(gate, fault)
-        if not circuit.assign(gate.output, new_value, stack):
-            return False
-    return True
-
-
-def undo_to_level(stack: List[tuple[str, Logic5]], circuit: Circuit, level: int) -> None:
-    while len(stack) > level:
-        net, prev = stack.pop()
-        circuit.values[net] = prev
-
-
-def podem(
-    circuit: Circuit,
-    fault: Fault,
-    timeout_s: Optional[float] = None,
-    max_depth: Optional[int] = None,
-    verbose: bool = False,
-) -> PodemResult:
-    start = time.monotonic()
-    stack: List[tuple[str, Logic5]] = []
-    circuit.reset()
-
-    def timed_out() -> bool:
-        return timeout_s is not None and (time.monotonic() - start) > timeout_s
-
-    def recurse(depth: int) -> PodemResult:
-        if timed_out():
-            return PodemResult(status="ABORTED", test_vector={}, po_observations={}, depth=depth, reason="timeout")
-        if max_depth is not None and depth > max_depth:
-            return PodemResult(status="ABORTED", test_vector={}, po_observations={}, depth=depth, reason="max_depth")
-
-        if check_test(circuit):
-            test_vector = vector_from_values(circuit.values, circuit.primary_inputs)
-            po_obs = {po: circuit.get_value(po) for po in circuit.primary_outputs}
-            return PodemResult(status="DETECTED", test_vector=test_vector, po_observations=po_obs, depth=depth)
-
-        fault_value = circuit.get_value(fault.net)
-        if fault_value in (Logic5.D, Logic5.DBAR) and not compute_d_frontier(circuit):
-            return PodemResult(status="UNTESTABLE", test_vector={}, po_observations={}, depth=depth)
-
-        try:
-            obj_net, obj_val = objective(circuit, fault)
-        except PodemAbort:
-            return PodemResult(status="UNTESTABLE", test_vector={}, po_observations={}, depth=depth)
-
-        pi_name, pi_val = backtrace(circuit, obj_net, obj_val)
-        for trial in (pi_val, invert_value(pi_val)):
-            level = len(stack)
-            if not imply(circuit, pi_name, trial, fault, stack):
-                undo_to_level(stack, circuit, level)
-                continue
-            if len(stack) == level:
-                continue
-            if verbose:
-                pass
-            result = recurse(depth + 1)
-            if result.status == "DETECTED":
-                return result
-            if result.status == "ABORTED":
-                return result
-            undo_to_level(stack, circuit, level)
-        return PodemResult(status="UNTESTABLE", test_vector={}, po_observations={}, depth=depth)
-
-    result = recurse(0)
-    if result.status != "DETECTED":
-        result.test_vector = vector_from_values(circuit.values, circuit.primary_inputs)
-        result.po_observations = {po: circuit.get_value(po) for po in circuit.primary_outputs}
-    return result
-
-===== FILE: atpg/logic5.py =====
+===============================
+FILE: atpg/logic5.py
+===============================
 """Five-valued logic utilities for ATPG."""
 
 from __future__ import annotations
@@ -433,7 +435,11 @@ def invert_value(value: Logic5) -> Logic5:
         return Logic5.D
     return Logic5.X
 
-===== FILE: atpg/__main__.py =====
+
+
+===============================
+FILE: atpg/__main__.py
+===============================
 """Module entry point."""
 
 from .cli import main
@@ -442,146 +448,293 @@ from .cli import main
 if __name__ == "__main__":
     raise SystemExit(main())
 
-===== FILE: atpg/circuit.py =====
-"""Circuit data structures and utilities."""
+
+
+===============================
+FILE: atpg/parser_bench.py
+===============================
+"""Parser for simple .bench netlists."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
+import re
+from typing import List
 
-from .logic5 import Logic5, GateEvalResult, evaluate_gate
-
-
-SUPPORTED_GATES = {"AND", "OR", "NAND", "NOR", "NOT", "BUF", "XOR", "XNOR"}
+from .circuit import Circuit, Gate, SUPPORTED_GATES
 
 
-@dataclass(frozen=True)
-class Gate:
-    gate_type: str
-    output: str
-    inputs: List[str]
-
-
-class CircuitError(Exception):
+class BenchParseError(Exception):
     pass
 
 
-class Circuit:
-    def __init__(self, gates: List[Gate], primary_inputs: List[str], primary_outputs: List[str]):
-        self.gates = gates
-        self.primary_inputs = primary_inputs
-        self.primary_outputs = primary_outputs
-        self.values: Dict[str, Logic5] = {}
-        self.gate_map: Dict[str, Gate] = {gate.output: gate for gate in gates}
-        self.topo_order: List[Gate] = self._topological_order()
-        self._init_values()
+_INPUT_RE = re.compile(r"^INPUT\(([^)]+)\)\s*$", re.IGNORECASE)
+_OUTPUT_RE = re.compile(r"^OUTPUT\(([^)]+)\)\s*$", re.IGNORECASE)
+_ASSIGN_RE = re.compile(r"^([^=]+)=\s*([A-Z]+)\(([^)]*)\)\s*$", re.IGNORECASE)
 
-    def _init_values(self) -> None:
-        nets = set(self.primary_inputs + self.primary_outputs)
-        for gate in self.gates:
-            nets.add(gate.output)
-            nets.update(gate.inputs)
-        self.values = {net: Logic5.X for net in nets}
 
-    def _topological_order(self) -> List[Gate]:
-        incoming: Dict[str, int] = {}
-        deps: Dict[str, List[Gate]] = {}
-        outputs = {gate.output for gate in self.gates}
-        for gate in self.gates:
-            incoming[gate.output] = sum(1 for inp in gate.inputs if inp in outputs)
-            for inp in gate.inputs:
-                deps.setdefault(inp, []).append(gate)
+def _clean_line(line: str) -> str:
+    line = line.split("#", 1)[0]
+    return line.strip()
 
-        ready = [gate for gate in self.gates if incoming[gate.output] == 0]
-        order: List[Gate] = []
 
-        while ready:
-            gate = ready.pop()
-            order.append(gate)
-            for nxt in deps.get(gate.output, []):
-                incoming[nxt.output] -= 1
-                if incoming[nxt.output] == 0:
-                    ready.append(nxt)
+def parse_bench(text: str) -> Circuit:
+    primary_inputs: List[str] = []
+    primary_outputs: List[str] = []
+    gates: List[Gate] = []
 
-        if len(order) != len(self.gates):
-            raise CircuitError("Sequential or cyclic dependencies detected; only combinational circuits supported.")
-        return order
+    for raw in text.splitlines():
+        line = _clean_line(raw)
+        if not line:
+            continue
+        if match := _INPUT_RE.match(line):
+            name = match.group(1).strip()
+            primary_inputs.append(name)
+            continue
+        if match := _OUTPUT_RE.match(line):
+            name = match.group(1).strip()
+            primary_outputs.append(name)
+            continue
+        if match := _ASSIGN_RE.match(line):
+            output = match.group(1).strip()
+            gate_type = match.group(2).strip().upper()
+            inputs = [item.strip() for item in match.group(3).split(",") if item.strip()]
+            if gate_type not in SUPPORTED_GATES:
+                raise BenchParseError(f"Unknown gate type: {gate_type}")
+            if gate_type in {"NOT", "BUF"} and len(inputs) != 1:
+                raise BenchParseError(f"Gate {gate_type} expects exactly one input")
+            if gate_type not in {"NOT", "BUF"} and len(inputs) < 2:
+                raise BenchParseError(f"Gate {gate_type} expects at least two inputs")
+            gates.append(Gate(gate_type=gate_type, output=output, inputs=inputs))
+            continue
+        raise BenchParseError(f"Unrecognized line: {raw}")
 
-    def reset(self) -> None:
-        for net in self.values:
-            self.values[net] = Logic5.X
+    if not primary_outputs:
+        raise BenchParseError("No OUTPUT declarations found")
 
-    def assign(self, net: str, value: Logic5, stack: List[tuple[str, Logic5]]) -> bool:
-        prev = self.values.get(net, Logic5.X)
-        if prev is value:
-            return True
-        if prev is not Logic5.X and value is not Logic5.X and prev is not value:
+    return Circuit(gates=gates, primary_inputs=primary_inputs, primary_outputs=primary_outputs)
+
+
+def parse_bench_file(path: str) -> Circuit:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError as exc:
+        raise BenchParseError(f"Failed to read netlist: {exc}") from exc
+    return parse_bench(text)
+
+
+
+===============================
+FILE: atpg/podem.py
+===============================
+"""PODEM algorithm implementation."""
+
+from __future__ import annotations
+
+import time
+from typing import Dict, List, Optional, Tuple
+
+from .circuit import Circuit
+from .fault import Fault
+from .logic5 import Logic5, invert_value, non_controlling_value
+from .utils import PodemResult
+
+
+class PodemAbort(Exception):
+    pass
+
+
+def vector_from_values(values: Dict[str, Logic5], primary_inputs: List[str]) -> Dict[str, Logic5]:
+    """Return a PI-only test vector snapshot from the circuit net values."""
+    return {pi: values.get(pi, Logic5.X) for pi in primary_inputs}
+
+
+def check_test(circuit: Circuit) -> bool:
+    return any(circuit.get_value(po) in (Logic5.D, Logic5.DBAR) for po in circuit.primary_outputs)
+
+
+def compute_d_frontier(circuit: Circuit) -> List:
+    frontier = []
+    for gate in circuit.topo_order:
+        if circuit.get_value(gate.output) is not Logic5.X:
+            continue
+        if any(val in (Logic5.D, Logic5.DBAR) for val in circuit.fanin_values(gate)):
+            frontier.append(gate)
+    return frontier
+
+
+def objective(circuit: Circuit, fault: Fault) -> Tuple[str, Logic5]:
+    fault_value = circuit.get_value(fault.net)
+
+    # If fault not yet activated (X/0/1), objective is to activate it:
+    # drive fault site to opposite of stuck value.
+    if fault_value in (Logic5.X, Logic5.ZERO, Logic5.ONE):
+        desired = Logic5.ONE if fault.stuck_at == 0 else Logic5.ZERO
+        return fault.net, desired
+
+    # Otherwise propagate: pick a D-frontier gate and set an X input to non-controlling value.
+    frontier = compute_d_frontier(circuit)
+    if not frontier:
+        raise PodemAbort("D-frontier empty")
+
+    gate = frontier[0]
+    target_value = non_controlling_value(gate.gate_type)
+
+    for inp in gate.inputs:
+        if circuit.get_value(inp) is Logic5.X:
+            # target_value can be None for some gates; fall back to X
+            return inp, target_value or Logic5.X
+
+    raise PodemAbort("No X input in D-frontier gate")
+
+
+def backtrace(circuit: Circuit, net_name: str, desired_value: Logic5) -> Tuple[str, Logic5]:
+    # If we already reached a PI, done.
+    if net_name in circuit.primary_inputs:
+        return net_name, desired_value
+
+    gate = circuit.gate_map.get(net_name)
+    if gate is None:
+        # Unknown driver (should not happen for well-formed comb netlists), return as-is.
+        return net_name, desired_value
+
+    gate_type = gate.gate_type.upper()
+
+    # Determine whether the objective is inverted through this gate.
+    inverted = gate_type in {"NAND", "NOR", "NOT", "XNOR"}
+
+    # Normalize to base types for reasoning.
+    if gate_type in {"NAND", "AND"}:
+        base_type = "AND"
+    elif gate_type in {"NOR", "OR"}:
+        base_type = "OR"
+    elif gate_type in {"XNOR", "XOR"}:
+        base_type = "XOR"
+    elif gate_type in {"NOT", "BUF"}:
+        base_type = gate_type
+    else:
+        base_type = gate_type
+
+    target = invert_value(desired_value) if inverted else desired_value
+
+    # Choose an input value that helps achieve target on the output.
+    if base_type == "AND":
+        desired_in = Logic5.ONE if target is Logic5.ONE else Logic5.ZERO
+    elif base_type == "OR":
+        desired_in = Logic5.ZERO if target is Logic5.ZERO else Logic5.ONE
+    elif base_type == "XOR":
+        desired_in = target
+    else:
+        desired_in = target
+
+    # Prefer an X input to continue backtracing.
+    for inp in gate.inputs:
+        if circuit.get_value(inp) is Logic5.X:
+            return backtrace(circuit, inp, desired_in)
+
+    # If none are X, still recurse on first input (classic simple backtrace behavior).
+    return backtrace(circuit, gate.inputs[0], desired_in)
+
+
+def imply(circuit: Circuit, pi_name: str, pi_value: Logic5, fault: Fault, stack: List[tuple[str, Logic5]]) -> bool:
+    if not circuit.set_pi(pi_name, pi_value, stack):
+        return False
+
+    for gate in circuit.topo_order:
+        new_value = circuit.evaluate_gate(gate, fault)
+        if not circuit.assign(gate.output, new_value, stack):
             return False
-        stack.append((net, prev))
-        self.values[net] = value
-        return True
 
-    def evaluate_gate(self, gate: Gate, fault: Optional["Fault"]) -> Logic5:
-        inputs = [self.values[inp] for inp in gate.inputs]
-        result: GateEvalResult = evaluate_gate(gate.gate_type, inputs)
-        if fault is not None and gate.output == fault.net:
-            stuck = 0 if fault.stuck_at == 0 else 1
-            if result.good is None:
-                return Logic5.X
-            return Logic5.from_pair(result.good, stuck)
-        return result.to_logic5()
-
-    def fanin_values(self, gate: Gate) -> List[Logic5]:
-        return [self.values[name] for name in gate.inputs]
-
-    def set_pi(self, name: str, value: Logic5, stack: List[tuple[str, Logic5]]) -> bool:
-        if name not in self.primary_inputs:
-            raise CircuitError(f"Unknown primary input: {name}")
-        return self.assign(name, value, stack)
-
-    def get_value(self, net: str) -> Logic5:
-        return self.values.get(net, Logic5.X)
+    return True
 
 
-from .fault import Fault  # noqa: E402  # avoid circular import at runtime
-
-===== FILE: atpg/fault.py =====
-"""Fault model definitions."""
-
-from __future__ import annotations
-
-from dataclasses import dataclass
+def undo_to_level(stack: List[tuple[str, Logic5]], circuit: Circuit, level: int) -> None:
+    while len(stack) > level:
+        net, prev = stack.pop()
+        circuit.values[net] = prev
 
 
-class FaultError(Exception):
-    pass
+def podem(
+    circuit: Circuit,
+    fault: Fault,
+    timeout_s: Optional[float] = None,
+    max_depth: Optional[int] = None,
+    verbose: bool = False,
+) -> PodemResult:
+    start = time.monotonic()
+    stack: List[tuple[str, Logic5]] = []
+    circuit.reset()
 
+    def timed_out() -> bool:
+        return timeout_s is not None and (time.monotonic() - start) > timeout_s
 
-@dataclass(frozen=True)
-class Fault:
-    net: str
-    stuck_at: int
+    def recurse(depth: int) -> PodemResult:
+        if timed_out():
+            return PodemResult(status="ABORTED", test_vector={}, po_observations={}, depth=depth, reason="timeout")
+        if max_depth is not None and depth > max_depth:
+            return PodemResult(status="ABORTED", test_vector={}, po_observations={}, depth=depth, reason="max_depth")
 
-    @classmethod
-    def parse(cls, text: str) -> "Fault":
+        # Success: some PO has D/DBAR.
+        if check_test(circuit):
+            test_vector = vector_from_values(circuit.values, circuit.primary_inputs)
+            po_obs = {po: circuit.get_value(po) for po in circuit.primary_outputs}
+            return PodemResult(status="DETECTED", test_vector=test_vector, po_observations=po_obs, depth=depth)
+
+        # If fault effect exists but cannot propagate further, untestable.
+        fault_value = circuit.get_value(fault.net)
+        if fault_value in (Logic5.D, Logic5.DBAR) and not compute_d_frontier(circuit):
+            return PodemResult(status="UNTESTABLE", test_vector={}, po_observations={}, depth=depth)
+
         try:
-            net, sa = text.split("/")
-        except ValueError as exc:
-            raise FaultError("Fault format must be <net>/SA0 or <net>/SA1") from exc
-        sa = sa.upper()
-        if sa not in {"SA0", "SA1"}:
-            raise FaultError("Fault format must be <net>/SA0 or <net>/SA1")
-        return cls(net=net.strip(), stuck_at=0 if sa == "SA0" else 1)
+            obj_net, obj_val = objective(circuit, fault)
+        except PodemAbort:
+            return PodemResult(status="UNTESTABLE", test_vector={}, po_observations={}, depth=depth)
 
-===== FILE: atpg/utils.py =====
-"""Utility helpers for ATPG."""
+        pi_name, pi_val = backtrace(circuit, obj_net, obj_val)
 
+        # Try chosen PI assignment, then its complement.
+        for trial in (pi_val, invert_value(pi_val)):
+            level = len(stack)
+
+            if not imply(circuit, pi_name, trial, fault, stack):
+                undo_to_level(stack, circuit, level)
+                continue
+
+            # If imply made no new assignment, skip (safety).
+            if len(stack) == level:
+                continue
+
+            if verbose:
+                # No-op hook point for future trace capture
+                pass
+
+            result = recurse(depth + 1)
+            if result.status in ("DETECTED", "ABORTED"):
+                return result
+
+            undo_to_level(stack, circuit, level)
+
+        return PodemResult(status="UNTESTABLE", test_vector={}, po_observations={}, depth=depth)
+
+    result = recurse(0)
+
+    # If not detected, still snapshot final values for debugging/reporting.
+    if result.status != "DETECTED":
+        result.test_vector = vector_from_values(circuit.values, circuit.primary_inputs)
+        result.po_observations = {po: circuit.get_value(po) for po in circuit.primary_outputs}
+
+    return result
+
+
+
+===============================
+FILE: atpg/utils.py
+===============================
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from .logic5 import Logic5
 
@@ -593,6 +746,13 @@ class PodemResult:
     po_observations: Dict[str, Logic5]
     depth: int
     reason: Optional[str] = None
+    trace: Optional[list[str]] = None  # <-- ADD THIS
+
+    # new fields
+    runtime_ms: Optional[float] = None
+    decisions: Optional[int] = None
+    implications: Optional[int] = None
+    backtracks: Optional[int] = None
 
     def to_json(self) -> str:
         payload = {
@@ -601,86 +761,528 @@ class PodemResult:
             "po_observations": {k: v.to_char() for k, v in self.po_observations.items()},
             "depth": self.depth,
             "reason": self.reason,
+            "runtime_ms": self.runtime_ms,
+            "decisions": self.decisions,
+            "implications": self.implications,
+            "backtracks": self.backtracks,
+            "trace": self.trace or [],  # <-- ADD THIS
         }
         return json.dumps(payload, indent=2, sort_keys=True)
 
 
-def vector_from_values(values: Dict[str, Logic5], primary_inputs: List[str]) -> Dict[str, Logic5]:
-    return {pi: values.get(pi, Logic5.X) for pi in primary_inputs}
 
-===== FILE: atpg/cli.py =====
-"""Command line interface for ATPG."""
+===============================
+FILE: examples/README.md
+===============================
+# Example Circuits
+
+## toy1.bench
+Simple AND feeding a NOT (NAND behavior).
+
+Example faults:
+- `n1/SA0` should be **DETECTED** with `a=1, b=1` (drives D through the NOT).
+- `n1/SA1` should be **DETECTED** with `a=0, b=X` or `a=X, b=0` (drives DBAR).
+
+## toy2.bench
+Redundant logic: `out = OR(n1, a)` with `n1 = AND(a, b)`.
+
+Example fault:
+- `n1/SA0` should be **UNTESTABLE** because `a=1` masks observation at the output.
+
+## toy3.bench
+Two-level XOR parity.
+
+Example faults:
+- `n1/SA0` should be **DETECTED** with `a=1, b=0, c=0`.
+- `n1/SA1` should be **DETECTED** with `a=0, b=0, c=0`.
+
+
+
+===============================
+FILE: examples/toy1.bench
+===============================
+# toy1: NAND-like via AND + NOT
+INPUT(a)
+INPUT(b)
+
+n1 = AND(a, b)
+out = NOT(n1)
+
+OUTPUT(out)
+
+
+
+===============================
+FILE: examples/toy2.bench
+===============================
+# toy2: redundancy causes untestable fault on n1
+INPUT(a)
+INPUT(b)
+
+n1 = AND(a, b)
+out = OR(n1, a)
+
+OUTPUT(out)
+
+
+
+===============================
+FILE: examples/toy3.bench
+===============================
+# toy3: XOR-based parity
+INPUT(a)
+INPUT(b)
+INPUT(c)
+
+n1 = XOR(a, b)
+out = XOR(n1, c)
+
+OUTPUT(out)
+
+
+
+===============================
+FILE: scripts/render_fault_sweep_tex.py
+===============================
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+
+def _escape_tex(s: str) -> str:
+    return (
+        s.replace("\\", "\\textbackslash{}")
+        .replace("_", "\\_")
+        .replace("&", "\\&")
+        .replace("%", "\\%")
+        .replace("#", "\\#")
+    )
+
+
+def _as_float(x: Any) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return 0.0
+
+
+def main() -> None:
+    artifacts = Path("artifacts")
+    out_dir = Path("report/artifacts")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    for p in sorted(artifacts.glob("*.json")):
+        if p.name == "results.json":
+            continue
+        try:
+            data = json.loads(p.read_text())
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        rows.append((p.name, data))
+
+    if not rows:
+        raise SystemExit("No artifacts/*.json found. Run make examples first.")
+
+    total = len(rows)
+    detected = sum(1 for _, d in rows if d.get("status") == "DETECTED")
+    untestable = sum(1 for _, d in rows if d.get("status") == "UNTESTABLE")
+    aborted = sum(1 for _, d in rows if d.get("status") == "ABORTED")
+
+    runtimes = [_as_float(d.get("runtime_ms")) for _, d in rows if d.get("runtime_ms") is not None]
+    depths = [_as_float(d.get("depth")) for _, d in rows]
+
+    def avg(xs: list[float]) -> float:
+        return sum(xs) / len(xs) if xs else 0.0
+
+    summary_lines = [
+        "\\subsection{Fault sweep summary}",
+        "\\begin{itemize}",
+        f"\\item Total faults evaluated: {total}",
+        f"\\item Detected: {detected} ({(100.0 * detected / total):.1f}\\%)",
+        f"\\item Untestable: {untestable} ({(100.0 * untestable / total):.1f}\\%)",
+        f"\\item Aborted: {aborted} ({(100.0 * aborted / total):.1f}\\%)",
+        f"\\item Average search depth: {avg(depths):.2f}",
+        f"\\item Average runtime (ms): {avg(runtimes):.2f}",
+        "\\end{itemize}",
+    ]
+    (out_dir / "fault_sweep_summary.tex").write_text("\n".join(summary_lines))
+
+    # Big table (trim to keep PDF sane, but still large)
+    # We keep all rows, but you can cap later if needed.
+    table = []
+    table.append("\\subsection{Fault sweep detailed results}")
+    table.append("\\begin{footnotesize}")
+    table.append("\\begin{longtable}{llllrrr}")
+    table.append("\\caption{Fault sweep results across all gate-output stuck-at faults in the provided netlists.}\\\\")
+    table.append("\\toprule")
+    table.append("Artifact & Status & Test vector & PO obs & Depth & Runtime(ms) & Backtracks\\\\")
+    table.append("\\midrule")
+    table.append("\\endfirsthead")
+    table.append("\\toprule")
+    table.append("Artifact & Status & Test vector & PO obs & Depth & Runtime(ms) & Backtracks\\\\")
+    table.append("\\midrule")
+    table.append("\\endhead")
+    table.append("\\midrule")
+    table.append("\\multicolumn{7}{r}{Continued on next page}\\\\")
+    table.append("\\endfoot")
+    table.append("\\bottomrule")
+    table.append("\\endlastfoot")
+
+    for fname, d in rows:
+        status = str(d.get("status", ""))
+        tv = d.get("test_vector", {})
+        po = d.get("po_observations", {})
+        depth = int(_as_float(d.get("depth")))
+        runtime_ms = _as_float(d.get("runtime_ms"))
+        backtracks = int(_as_float(d.get("backtracks")))
+
+        tv_s = ", ".join(f"{k}={v}" for k, v in tv.items()) if isinstance(tv, dict) else str(tv)
+        po_s = ", ".join(f"{k}={v}" for k, v in po.items()) if isinstance(po, dict) else str(po)
+
+        row = (
+            f"{_escape_tex(fname)} & "
+            f"{_escape_tex(status)} & "
+            f"{_escape_tex(tv_s)} & "
+            f"{_escape_tex(po_s)} & "
+            f"{depth} & "
+            f"{runtime_ms:.2f} & "
+            f"{backtracks}\\\\"
+        )
+        table.append(row)
+
+    table.append("\\end{longtable}")
+    table.append("\\end{footnotesize}")
+
+    (out_dir / "fault_sweep_table.tex").write_text("\n".join(table))
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+===============================
+FILE: scripts/render_results_tex.py
+===============================
+"""Render LaTeX table of results for the report."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+
+def main() -> None:
+    results_path = Path("artifacts/results.json")
+    if not results_path.exists():
+        raise SystemExit("Run 'make examples' first to generate artifacts/results.json")
+
+    rows = json.loads(results_path.read_text())
+    lines = [
+        "\\begin{table}[h]",
+        "\\centering",
+        "\\begin{tabular}{lllll}",
+        "\\toprule",
+        "Netlist & Net & Fault & Status & Depth \\\\",
+        "\\midrule",
+    ]
+    for r in rows:
+        netlist = r.get("netlist", "?")
+        net = r.get("net", "?")
+        fault = r.get("fault", "?")
+        status = r.get("status", "?")
+        depth = r.get("depth", "")
+        lines.append(f"{netlist} & {net} & {fault} & {status} & {depth} \\\\")
+    lines.extend(
+        [
+            "\\bottomrule",
+            "\\end{tabular}",
+            "\\caption{ATPG results across example netlists and gate-output stuck-at faults.}",
+            "\\label{tab:results}",
+            "\\end{table}",
+        ]
+    )
+    Path("report/artifacts/results.tex").write_text("\n".join(lines))
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+===============================
+FILE: scripts/render_trace_tex.py
+===============================
+"""Render verbose trace logs into LaTeX-friendly verbatim blocks."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def main() -> None:
+    src = Path("artifacts")
+    dst = Path("report/artifacts")
+    dst.mkdir(parents=True, exist_ok=True)
+
+    for path in sorted(src.glob("trace_*.txt")):
+        body = path.read_text(errors="replace")
+        out = dst / f"{path.stem}.tex"
+        out.write_text("\\begin{verbatim}\n" + body + "\n\\end{verbatim}\n")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+===============================
+FILE: scripts/run_faults.py
+===============================
+"""Run ATPG for all gate-output stuck-at faults in given .bench netlists."""
 
 from __future__ import annotations
 
 import argparse
-import json
-from typing import Any, Dict
+from pathlib import Path
 
-from .fault import Fault, FaultError
-from .parser_bench import BenchParseError, parse_bench_file
-from .podem import podem
-
-
-def _run_command(args: argparse.Namespace) -> int:
-    try:
-        circuit = parse_bench_file(args.netlist)
-        fault = Fault.parse(args.fault)
-    except (BenchParseError, FaultError, OSError, ValueError) as exc:
-        print(f"Error: {exc}")
-        return 2
-
-    if fault.net not in circuit.gate_map:
-        print("Error: Fault must target a gate output net (not a primary input).")
-        return 2
-
-    result = podem(
-        circuit,
-        fault,
-        timeout_s=args.timeout_s,
-        max_depth=args.max_depth,
-        verbose=args.verbose,
-    )
-
-    if args.json:
-        print(result.to_json())
-        return 0
-
-    print(f"Status: {result.status}")
-    if result.reason:
-        print(f"Reason: {result.reason}")
-    print("Test vector:")
-    for name, value in result.test_vector.items():
-        print(f"  {name}: {value.to_char()}")
-    if result.po_observations:
-        print("PO observations:")
-        for name, value in result.po_observations.items():
-            print(f"  {name}: {value.to_char()}")
-    return 0
+from atpg.fault import Fault  # noqa: E402
+from atpg.parser_bench import parse_bench_file  # noqa: E402
+from atpg.podem import podem  # noqa: E402
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="PODEM-based ATPG for combinational circuits")
-    sub = parser.add_subparsers(dest="command", required=True)
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--netlists", nargs="+", required=True, help="List of .bench files")
+    ap.add_argument("--outdir", default="artifacts", help="Output directory")
+    ap.add_argument("--timeout_s", type=float, default=None)
+    ap.add_argument("--max_depth", type=int, default=None)
+    ap.add_argument("--verbose", action="store_true")
+    args = ap.parse_args()
 
-    run_parser = sub.add_parser("run", help="Run PODEM ATPG")
-    run_parser.add_argument("--netlist", required=True, help="Path to .bench netlist")
-    run_parser.add_argument("--fault", required=True, help="Fault specification <net>/SA0 or <net>/SA1")
-    run_parser.add_argument("--timeout_s", type=float, default=None, help="Timeout in seconds")
-    run_parser.add_argument("--max_depth", type=int, default=None, help="Maximum recursion depth")
-    run_parser.add_argument("--verbose", action="store_true", help="Verbose output")
-    run_parser.add_argument("--json", action="store_true", help="Output JSON")
-    run_parser.set_defaults(func=_run_command)
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    return parser
+    for netlist_path in args.netlists:
+        circuit = parse_bench_file(netlist_path)
+        netlist_stem = Path(netlist_path).stem
 
-
-def main(argv: Any = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    return args.func(args)
+        gate_outputs = sorted(circuit.gate_map.keys())
+        for net in gate_outputs:
+            for sa in (0, 1):
+                fault = Fault(net=net, stuck_at=sa)
+                result = podem(
+                    circuit=parse_bench_file(netlist_path),
+                    fault=fault,
+                    timeout_s=args.timeout_s,
+                    max_depth=args.max_depth,
+                    verbose=args.verbose,
+                )
+                fname = f"{netlist_stem}_{net}_SA{sa}.json"
+                (outdir / fname).write_text(result.to_json())
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
+
+
+
+===============================
+FILE: scripts/summarize_results.py
+===============================
+"""Summarize JSON outputs from example runs into JSON, CSV, and summary stats."""
+
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+
+
+def _parse_filename(name: str) -> tuple[str, str, str]:
+    # expected: <netlist>_<net>_SA0.json or SA1.json
+    stem = name.removesuffix(".json")
+    parts = stem.split("_")
+    if len(parts) < 3:
+        return stem, "?", "?"
+    netlist = parts[0]
+    fault = f"{parts[-2]}/{parts[-1]}"
+    net = "_".join(parts[1:-2])
+    return netlist, net, fault
+
+
+def main() -> None:
+    outdir = Path("artifacts")
+    rows = []
+
+    for path in sorted(outdir.glob("*.json")):
+        if path.name in {"results.json", "summary.json"}:
+            continue
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            continue
+
+        netlist, net, fault = _parse_filename(path.name)
+        status = data.get("status", "UNKNOWN")
+        depth = data.get("depth", None)
+        tv = data.get("test_vector", {})
+        tv_str = ", ".join(f"{k}={v}" for k, v in tv.items())
+
+        rows.append(
+            {
+                "file": path.name,
+                "netlist": netlist,
+                "net": net,
+                "fault": fault,
+                "status": status,
+                "depth": depth,
+                "test_vector": tv_str,
+            }
+        )
+
+    (outdir / "results.json").write_text(json.dumps(rows, indent=2))
+
+    with (outdir / "results.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(
+            f,
+            fieldnames=["file", "netlist", "net", "fault", "status", "depth", "test_vector"],
+        )
+        w.writeheader()
+        w.writerows(rows)
+
+    counts: dict[str, int] = {}
+    by_netlist: dict[str, dict[str, int]] = {}
+
+    for r in rows:
+        s = r["status"]
+        counts[s] = counts.get(s, 0) + 1
+        nl = r["netlist"]
+        by_netlist.setdefault(nl, {})
+        by_netlist[nl][s] = by_netlist[nl].get(s, 0) + 1
+
+    summary = {
+        "total_cases": len(rows),
+        "status_counts": counts,
+        "by_netlist": by_netlist,
+    }
+    (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+===============================
+FILE: tests/test_logic5.py
+===============================
+from atpg.logic5 import Logic5, evaluate_gate
+
+
+def test_and_with_d():
+    result = evaluate_gate("AND", [Logic5.D, Logic5.ONE]).to_logic5()
+    assert result is Logic5.D
+
+
+def test_and_with_zero_masks_d():
+    result = evaluate_gate("AND", [Logic5.D, Logic5.ZERO]).to_logic5()
+    assert result is Logic5.ZERO
+
+
+def test_or_with_dbar():
+    result = evaluate_gate("OR", [Logic5.DBAR, Logic5.ZERO]).to_logic5()
+    assert result is Logic5.DBAR
+
+
+def test_xor_with_d():
+    result = evaluate_gate("XOR", [Logic5.D, Logic5.ZERO]).to_logic5()
+    assert result is Logic5.D
+
+
+def test_not_inverts_d():
+    result = evaluate_gate("NOT", [Logic5.D]).to_logic5()
+    assert result is Logic5.DBAR
+
+
+
+===============================
+FILE: tests/test_parser.py
+===============================
+from atpg.parser_bench import parse_bench
+
+
+def test_parse_basic_bench():
+    text = """
+    INPUT(a)
+    INPUT(b)
+    n1 = AND(a, b)
+    out = NOT(n1)
+    OUTPUT(out)
+    """
+    circuit = parse_bench(text)
+    assert circuit.primary_inputs == ["a", "b"]
+    assert circuit.primary_outputs == ["out"]
+    assert len(circuit.gates) == 2
+    assert circuit.gates[0].gate_type == "AND"
+    assert circuit.gates[1].gate_type == "NOT"
+
+
+
+===============================
+FILE: tests/test_podem_small.py
+===============================
+from atpg.fault import Fault
+from atpg.parser_bench import parse_bench
+from atpg.podem import podem
+
+
+def test_podem_detects_fault():
+    text = """
+    INPUT(a)
+    INPUT(b)
+    n1 = AND(a, b)
+    out = NOT(n1)
+    OUTPUT(out)
+    """
+    circuit = parse_bench(text)
+    fault = Fault.parse("n1/SA0")
+    result = podem(circuit, fault)
+    assert result.status == "DETECTED"
+    assert result.test_vector["a"].to_char() == "1"
+    assert result.test_vector["b"].to_char() == "1"
+
+
+def test_podem_detects_fault_inversion():
+    text = """
+    INPUT(a)
+    INPUT(b)
+    n1 = OR(a, b)
+    out = BUF(n1)
+    OUTPUT(out)
+    """
+    circuit = parse_bench(text)
+    fault = Fault.parse("n1/SA1")
+    result = podem(circuit, fault)
+    assert result.status == "DETECTED"
+
+
+def test_podem_untestable_fault():
+    text = """
+    INPUT(a)
+    INPUT(b)
+    n1 = AND(a, b)
+    out = OR(n1, a)
+    OUTPUT(out)
+    """
+    circuit = parse_bench(text)
+    fault = Fault.parse("n1/SA0")
+    result = podem(circuit, fault)
+    assert result.status == "UNTESTABLE"
+
+
 
