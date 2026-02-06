@@ -1,0 +1,8 @@
+# toy1: NAND-like via AND + NOT
+INPUT(a)
+INPUT(b)
+
+n1 = AND(a, b)
+out = NOT(n1)
+
+OUTPUT(out)
