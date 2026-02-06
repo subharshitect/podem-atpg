@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 
 from .circuit import Circuit
 from .fault import Fault
-from .logic5 import Logic5, invert_value, non_controlling_value
+from .logic5 import Logic5, controlling_value, invert_value, non_controlling_value
 from .utils import PodemResult, vector_from_values
 
 

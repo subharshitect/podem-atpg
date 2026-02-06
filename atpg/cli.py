@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any
+import json
+from typing import Any, Dict
 
 from .fault import Fault, FaultError
 from .parser_bench import BenchParseError, parse_bench_file

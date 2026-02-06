@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import List, Tuple
 
-from .circuit import Circuit, Gate, SUPPORTED_GATES
+from .circuit import Circuit, CircuitError, Gate, SUPPORTED_GATES
 
 
 class BenchParseError(Exception):

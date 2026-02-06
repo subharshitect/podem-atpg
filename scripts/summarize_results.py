@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Summarize JSON outputs from example runs."""
 
 from __future__ import annotations
@@ -8,22 +7,21 @@ from pathlib import Path
 
 
 def main() -> None:
-    artifacts = Path("artifacts")
-    artifacts.mkdir(parents=True, exist_ok=True)
-
     outputs = []
-    for path in sorted(artifacts.glob("*.json")):
+    for path in sorted(Path("artifacts").glob("*.json")):
+        if path.name == "results.json":
+            continue
         data = json.loads(path.read_text())
-        tv = data.get("test_vector", {})
+        if not isinstance(data, dict):
+            continue
         outputs.append(
             {
                 "file": path.name,
-                "status": data.get("status"),
-                "test_vector": ", ".join(f"{k}={v}" for k, v in tv.items()),
+                "status": data["status"],
+                "test_vector": ", ".join(f"{k}={v}" for k, v in data["test_vector"].items()),
             }
         )
-
-    (artifacts / "results.json").write_text(json.dumps(outputs, indent=2) + "\n")
+    Path("artifacts/results.json").write_text(json.dumps(outputs, indent=2))
 
 
 if __name__ == "__main__":

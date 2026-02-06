@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Render LaTeX table of results for the report."""
 
 from __future__ import annotations
@@ -10,13 +9,9 @@ from pathlib import Path
 def main() -> None:
     results_path = Path("artifacts/results.json")
     if not results_path.exists():
-        raise SystemExit("artifacts/results.json missing. Run `make examples` first.")
+        raise SystemExit("Run 'make examples' first to generate results.json")
 
     rows = json.loads(results_path.read_text())
-
-    out_dir = Path("report/artifacts")
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     lines = [
         "\\begin{table}[h]",
         "\\centering",
@@ -29,11 +24,8 @@ def main() -> None:
         parts = row["file"].replace(".json", "").split("_")
         netlist = parts[0]
         fault = f"{parts[1]}/{parts[2]}"
-        status = row.get("status", "")
-        vector = row.get("test_vector", "")
-        netlist = netlist.replace("_", "\\_")
-        fault = fault.replace("_", "\\_")
-        vector = vector.replace("_", "\\_")
+        status = row["status"]
+        vector = row["test_vector"]
         lines.append(f"{netlist} & {fault} & {status} & {vector} \\\\")
     lines.extend(
         [
@@ -44,7 +36,7 @@ def main() -> None:
             "\\end{table}",
         ]
     )
-    (out_dir / "results.tex").write_text("\n".join(lines) + "\n")
+    Path("report/artifacts/results.tex").write_text("\n".join(lines))
 
 
 if __name__ == "__main__":
