@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.podem/
+.pytest_cache/
+artifacts/
+report/*.aux
+report/*.log
+report/*.out
+report/*.pdf
+report/artifacts/results.tex

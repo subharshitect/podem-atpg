@@ -1,0 +1,2 @@
+\section{Background}
+Stuck-at faults model a defect that forces a net to logic 0 (SA0) or logic 1 (SA1) regardless of its intended value. To propagate fault effects, ATPG commonly uses five-valued logic: \{0, 1, X, D, \={D}\}, where D represents good=1/faulty=0 and \={D} represents good=0/faulty=1. The D-frontier is the set of gates whose output is X and that have at least one D/\={D} input, indicating potential paths for fault propagation. PODEM uses objective selection, backtrace, and implication to guide a depth-first search for a detecting vector.
