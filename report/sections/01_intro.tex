@@ -1,0 +1,2 @@
+\section{Problem Statement and Scope}
+The goal is to generate test patterns that detect single stuck-at faults on gate-output nets in combinational circuits. The implementation strictly excludes fanout-branch faults and sequential elements; any netlist exhibiting sequential behavior or cyclic dependencies is rejected with a clear error. The PODEM algorithm is used to efficiently search for detecting input assignments without brute-force enumeration of all primary input vectors.
