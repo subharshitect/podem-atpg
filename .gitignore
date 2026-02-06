@@ -1,7 +1,6 @@
 __pycache__/
 *.pyc
 .venv/
-.podem/
 .pytest_cache/
 artifacts/
 report/*.aux

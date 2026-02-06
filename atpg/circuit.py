@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from .logic5 import Logic5, GateEvalResult, evaluate_gate
 
@@ -82,6 +82,8 @@ class Circuit:
         result: GateEvalResult = evaluate_gate(gate.gate_type, inputs)
         if fault is not None and gate.output == fault.net:
             stuck = 0 if fault.stuck_at == 0 else 1
+            if result.good is None:
+                return Logic5.X
             return Logic5.from_pair(result.good, stuck)
         return result.to_logic5()
 

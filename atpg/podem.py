@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 
 from .circuit import Circuit
 from .fault import Fault
-from .logic5 import Logic5, invert_value, non_controlling_value
+from .logic5 import Logic5, controlling_value, invert_value, non_controlling_value
 from .utils import PodemResult, vector_from_values
 
 
@@ -70,26 +70,7 @@ def backtrace(circuit: Circuit, net_name: str, desired_value: Logic5) -> Tuple[s
     elif base_type == "OR":
         desired_in = Logic5.ZERO if target is Logic5.ZERO else Logic5.ONE
     elif base_type == "XOR":
-        target_bit = target.to_bool()
-        unknowns = [inp for inp in gate.inputs if circuit.get_value(inp) is Logic5.X]
-        parity = 0
-        for inp in gate.inputs:
-            val = circuit.get_value(inp)
-            if val is Logic5.X:
-                continue
-            bit = val.to_bool()
-            if bit is None:
-                continue
-            parity ^= bit
-        if target_bit is None:
-            desired_in = Logic5.X
-        else:
-            if inverted:
-                target_bit ^= 1
-            desired_in = Logic5.ONE if (target_bit ^ parity) == 1 else Logic5.ZERO
-        if unknowns:
-            return backtrace(circuit, unknowns[0], desired_in)
-        return backtrace(circuit, gate.inputs[0], desired_in)
+        desired_in = target
     else:
         desired_in = target
 
