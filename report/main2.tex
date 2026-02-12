@@ -1,0 +1,1026 @@
+% PODEM-based ATPG Report (code-grounded)
+% This LaTeX source is written to be compiled with pdflatex.
+\documentclass[10pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{verbatim}
+\usepackage{enumitem}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  frame=single,
+  breaklines=true,
+  showstringspaces=false
+}
+
+\title{Implementation of Automatic Test Pattern Generation Using PODEM}
+\author{(Sudip Roy)}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document presents a PODEM (Path-Oriented Decision Making) based Automatic Test Pattern Generation (ATPG) flow for combinational circuits, explicitly tied to the supplied Python repository. The assumed fault model is gate-output stuck-at faults, represented as $(\text{net}, \text{stuck\_at})$ with $\text{stuck\_at} \in \{0,1\}$, instantiated by \texttt{Fault} in \texttt{atpg/fault.py} and constrained by the CLI validation \texttt{fault.net in circuit.gate\_map} in \texttt{atpg/cli.py}. Logic simulation is performed in a five-valued domain \{0, 1, X, D, DBAR\} implemented via \texttt{Logic5} in \texttt{atpg/logic5.py}, derived from paired good versus faulty semantics, and computed per gate using \texttt{evaluate\_gate} in \texttt{atpg/logic5.py} and \texttt{Circuit.evaluate\_gate} in \texttt{atpg/circuit.py}. The recursive PODEM procedure appears in \texttt{atpg/podem.py}, comprising objective selection (\texttt{objective}), D-frontier identification (\texttt{compute\_d\_frontier}), PI-directed backtrace (\texttt{backtrace}), forward implication over a topologically ordered gate list (\texttt{imply}), and reversible backtracking (\texttt{undo\_to\_level}). The supported gate library is \{AND, OR, NAND, NOR, NOT, BUF, XOR, XNOR\}, declared by \texttt{SUPPORTED\_GATES} in \texttt{atpg/circuit.py} and enforced by \texttt{parse\_bench} in \texttt{atpg/parser\_bench.py}. The repository includes three toy benchmarks (\texttt{examples/toy1.bench}, \texttt{toy2.bench}, \texttt{toy3.bench}) with stated detectability expectations in \texttt{examples/README.md}. This report provides worked traces derived from the implementation semantics (without asserting they are program logs), a reproducible experiment plan that references the included sweep and reporting scripts in \texttt{scripts/}, and a concrete instrumentation plan to fill currently unset fields (\texttt{runtime\_ms}, \texttt{decisions}, \texttt{implications}, \texttt{backtracks}, \texttt{trace}) in \texttt{PodemResult} from \texttt{atpg/utils.py}.
+\end{abstract}
+
+\section{Problem Definition and Formal Model}
+
+\subsection{Circuit model}
+A combinational circuit is modeled as a directed acyclic graph (DAG) $G=(V,E)$. Each node $v \in V$ denotes either a primary input (PI), a primary output (PO), or a gate output net, while each edge $(u,v)\in E$ captures a signal dependency from a driver net to a fanout net. In the implementation, gates are stored using the dataclass \texttt{Gate(gate\_type, output, inputs)} in \texttt{atpg/circuit.py}. Net identifiers are strings indexing \texttt{Circuit.values}, which maps each net to a \texttt{Logic5} symbol.
+
+Let:
+\begin{itemize}[leftmargin=*]
+\item $\mathcal{P}_{in}$ denote the set of primary input net names, realized as \texttt{Circuit.primary\_inputs}.
+\item $\mathcal{P}_{out}$ denote the set of primary output net names, realized as \texttt{Circuit.primary\_outputs}.
+\item $\mathcal{G}$ denote the ordered gate list stored in \texttt{Circuit.gates}.
+\item For each gate $g \in \mathcal{G}$, write $\text{out}(g)$ for its output net and $\text{in}(g)$ for its input-net list.
+\end{itemize}
+
+To ensure the circuit is purely combinational, the code uses \texttt{Circuit.\_topological\_order()}, which constructs a topological ordering of gates and throws \texttt{CircuitError} if ordering fails due to a cycle. Concretely, it computes dependency counts in an \texttt{incoming} map keyed by \texttt{gate.output} and performs Kahn-style elimination. If not all gates can be ordered, the circuit is treated as cyclic or sequential and rejected with: \texttt{"Sequential or cyclic dependencies detected; only combinational circuits supported."}
+
+\subsection{Fault model}
+A stuck-at fault is defined as a pair $(n, s)$, where $n$ is a net name and $s \in \{0,1\}$ is the constant stuck value. In this repository, \texttt{Fault(net, stuck\_at)} is defined in \texttt{atpg/fault.py}, and \texttt{Fault.parse} accepts textual formats \texttt{<net>/SA0} and \texttt{<net>/SA1}. The CLI in \texttt{atpg/cli.py} restricts $n$ to be a gate output by checking \texttt{fault.net not in circuit.gate\_map}, thereby disallowing faults on primary inputs.
+
+Under this constraint, the set of modeled faults is exactly:
+\[
+\mathcal{F} = \{ (\text{out}(g), s) \mid g \in \mathcal{G}, s \in \{0,1\}\}.
+\]
+Branch faults (fanout stem versus branch) are not represented, and PI stuck-at faults are also excluded.
+
+\subsection{Detectability condition}
+Let $C$ be the good (fault-free) circuit function and let $C_{(n,s)}$ be the faulty circuit in which net $n$ is forced to $s$ at the fault site. A test vector is a PI assignment $\mathbf{x}:\mathcal{P}_{in} \to \{0,1\}$. A fault $(n,s)$ is detectable when there exists $\mathbf{x}$ such that at least one primary output differs between the good and faulty responses:
+\[
+\exists \mathbf{x}\ \exists p \in \mathcal{P}_{out}: \ C(\mathbf{x})[p] \neq C_{(n,s)}(\mathbf{x})[p].
+\]
+Equivalently, define paired PO semantics:
+\[
+\mathbf{y}(\mathbf{x}) = (C(\mathbf{x})[p], C_{(n,s)}(\mathbf{x})[p]) \in \{0,1\}^2.
+\]
+Then detection is:
+\[
+\exists \mathbf{x}\ \exists p: \mathbf{y}(\mathbf{x}) \in \{(0,1), (1,0)\}.
+\]
+
+The implementation checks this condition using five-valued outputs: \texttt{check\_test(circuit)} in \texttt{atpg/podem.py} returns true exactly when any PO is \texttt{Logic5.D} or \texttt{Logic5.DBAR}. These correspond directly to mismatched pairs $(1,0)$ and $(0,1)$.
+
+\subsection{Activation and propagation}
+Fault detection requires two necessary conditions:
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Fault activation:} the good value at the fault site must differ from the stuck value. In paired form, this yields $D=(1,0)$ for SA0 (good 1, faulty 0) or $DBAR=(0,1)$ for SA1.
+\item \textbf{Propagation (observability):} the $D/DBAR$ discrepancy must be sensitized through logic to at least one PO, meaning downstream gates must not mask the discrepancy using controlling values.
+\end{enumerate}
+
+Within the code, activation is driven by \texttt{objective}: if the fault site value is in \texttt{(X, ZERO, ONE)}, the objective is to force \texttt{fault.net} to the complement of \texttt{fault.stuck\_at}. After activation, propagation objectives are formed by selecting a D-frontier gate and setting an X input to a non-controlling value using \texttt{non\_controlling\_value(gate.gate\_type)}.
+
+\section{Five-Valued Logic as Paired Semantics (Math-First)}
+
+\subsection{Paired domain and unknown}
+The five-valued system is obtained from a paired interpretation: each net conceptually carries $(g,f)$, where $g$ is the good-circuit value and $f$ is the faulty-circuit value. Unknowns are represented as $\bot$, meaning not yet determined in the search. In the implementation, $\bot$ is encoded with \texttt{Optional[int]} where \texttt{None} denotes $\bot$.
+
+Define:
+\[
+g,f \in \{0,1,\bot\}.
+\]
+The symbol mapping is:
+\[
+0=(0,0),\quad 1=(1,1),\quad D=(1,0),\quad DBAR=(0,1),\quad X=(\bot,\bot).
+\]
+This is realized by:
+\begin{itemize}[leftmargin=*]
+\item \texttt{Logic5.as\_pair()} in \texttt{atpg/logic5.py}: returns $(0,0)$ for \texttt{ZERO}, $(1,1)$ for \texttt{ONE}, $(1,0)$ for \texttt{D}, $(0,1)$ for \texttt{DBAR}, and $(None,None)$ for \texttt{X}.
+\item \texttt{Logic5.from\_pair(good, faulty)} in \texttt{atpg/logic5.py}: produces \texttt{X} if either component is \texttt{None}; otherwise returns the corresponding equal-pair or mismatch-pair symbol.
+\end{itemize}
+
+Accordingly, \texttt{Logic5} serves as a compact encoding of good/faulty paired semantics under partial information.
+
+\subsection{Gate evaluation via pair lifting}
+For a gate type $\circ$ with Boolean operator $\phi_{\circ}$, define lifted evaluation as:
+\[
+g_{out} = \phi_{\circ}(g_1,\dots,g_k), \quad f_{out} = \phi_{\circ}(f_1,\dots,f_k),
+\]
+with evaluation extended to handle $\bot$.
+The code accomplishes this by:
+\begin{enumerate}[leftmargin=*]
+\item extracting \texttt{good\_inputs} and \texttt{faulty\_inputs} using \texttt{Logic5.as\_pair()} inside \texttt{evaluate\_gate(gate\_type, inputs)} in \texttt{atpg/logic5.py},
+\item applying \texttt{\_and}, \texttt{\_or}, \texttt{\_xor}, or \texttt{\_invert} separately to the good and faulty sides,
+\item returning \texttt{GateEvalResult(good, faulty)} which can be mapped back to a symbol via \texttt{GateEvalResult.to\_logic5()}.
+\end{enumerate}
+
+\subsection{Unknown-aware Boolean operators}
+The unknown-aware operator implementations are:
+\begin{itemize}[leftmargin=*]
+\item \texttt{\_and(values)}: returns 0 if any input is 0; returns \texttt{None} if no 0 exists and at least one input is \texttt{None}; otherwise returns 1.
+\item \texttt{\_or(values)}: returns 1 if any input is 1; returns \texttt{None} if no 1 exists and at least one input is \texttt{None}; otherwise returns 0.
+\item \texttt{\_xor(values)}: returns \texttt{None} if any input is \texttt{None}; otherwise returns parity over 0/1.
+\item \texttt{\_invert(v)}: returns \texttt{None} if \texttt{v} is \texttt{None}; otherwise returns $1-v$.
+\end{itemize}
+
+These rules implement controlling-value masking for AND/OR and strict unknown propagation for XOR.
+
+\subsection{Derived truth tables from pair semantics}
+The tables below follow by interpreting each symbol as a pair and performing lifted evaluation; they match the unit tests in \texttt{tests/test\_logic5.py}.
+
+\subsubsection{NOT}
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Input & NOT(Input) \\
+\midrule
+0 & 1 \\
+1 & 0 \\
+D $(1,0)$ & DBAR $(0,1)$ \\
+DBAR $(0,1)$ & D $(1,0)$ \\
+X $(\bot,\bot)$ & X \\
+\bottomrule
+\end{tabular}
+\end{center}
+In particular, \texttt{test\_not\_inverts\_d} checks that \texttt{NOT(D)=DBAR}.
+
+\subsubsection{AND with controlling value 0}
+Let $a,b \in \{0,1,D,DBAR,X\}$. Because \texttt{\_and} outputs 0 immediately when any component is 0, discrepancies are suppressed by a controlling 0. A representative subset is:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+$a$ & $b$ & $a \wedge b$ \\
+\midrule
+D $(1,0)$ & 1 $(1,1)$ & D $(1,0)$ \\
+D $(1,0)$ & 0 $(0,0)$ & 0 $(0,0)$ \\
+DBAR $(0,1)$ & 1 $(1,1)$ & DBAR $(0,1)$ \\
+DBAR $(0,1)$ & 0 $(0,0)$ & 0 $(0,0)$ \\
+D $(1,0)$ & X $(\bot,\bot)$ & X (since good: $1 \wedge \bot=\bot$, faulty: $0 \wedge \bot=0$ but faulty becomes 0 while good is unknown; \texttt{from\_pair} maps any None to X) \\
+\bottomrule
+\end{tabular}
+\end{center}
+The unit tests \texttt{test\_and\_with\_d} and \texttt{test\_and\_with\_zero\_masks\_d} validate the first two rows.
+
+\subsubsection{OR with controlling value 1}
+By symmetry, OR hides discrepancies when a controlling 1 is present. A representative subset is:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+$a$ & $b$ & $a \vee b$ \\
+\midrule
+DBAR $(0,1)$ & 0 $(0,0)$ & DBAR $(0,1)$ \\
+DBAR $(0,1)$ & 1 $(1,1)$ & 1 $(1,1)$ \\
+D $(1,0)$ & 0 $(0,0)$ & D $(1,0)$ \\
+D $(1,0)$ & 1 $(1,1)$ & 1 $(1,1)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The test \texttt{test\_or\_with\_dbar} covers the first row.
+
+\subsubsection{XOR}
+XOR is strict with unknowns because \texttt{\_xor} returns \texttt{None} if any input is \texttt{None}, so any X input forces X output regardless of the other inputs. For known inputs:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+$a$ & $b$ & $a \oplus b$ \\
+\midrule
+D $(1,0)$ & 0 $(0,0)$ & D $(1,0)$ \\
+D $(1,0)$ & 1 $(1,1)$ & DBAR $(0,1)$ \\
+DBAR $(0,1)$ & 0 $(0,0)$ & DBAR $(0,1)$ \\
+DBAR $(0,1)$ & 1 $(1,1)$ & D $(1,0)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The test \texttt{test\_xor\_with\_d} checks the first row.
+
+\section{Fault Injection Semantics (Code-Grounded)}
+
+\subsection{Where fault injection occurs}
+Fault injection is implemented at a single gate output, inside \texttt{Circuit.evaluate\_gate(self, gate, fault)} in \texttt{atpg/circuit.py}. The method:
+\begin{enumerate}[leftmargin=*]
+\item Reads current input symbols from \texttt{self.values[inp]}.
+\item Computes \texttt{GateEvalResult(good, faulty)} by calling \texttt{evaluate\_gate(gate.gate\_type, inputs)}.
+\item If \texttt{fault is not None} and \texttt{gate.output == fault.net}, it overwrites the faulty component with the stuck value while preserving the good component:
+\[
+(g_{out}, f_{out}) \mapsto (g_{out}, s).
+\]
+This is returned via \texttt{Logic5.from\_pair(result.good, stuck)}, where \texttt{stuck} is 0 for SA0 and 1 for SA1.
+\item Otherwise, it returns \texttt{result.to\_logic5()}.
+\end{enumerate}
+
+\subsection{Consequence: unknown good value yields X under injection}
+One key behavior is:
+\[
+\texttt{if result.good is None: return Logic5.X}.
+\]
+Therefore, if the good value at the fault site is unknown, the injected node remains X even though the stuck value is known. This enforces that D or DBAR can only be produced once the good value is determined, aligning with activation requirements.
+
+\subsection{Worked activation example for toy1 fault n1/SA0}
+Toy1 netlist:
+\[
+n1 = AND(a,b), \quad out = NOT(n1).
+\]
+Fault: $(n1, 0)$.
+Activation requires $g(n1)=1$ while $f(n1)=0$ due to SA0, yielding $D=(1,0)$ on $n1$.
+In code terms:
+\begin{itemize}[leftmargin=*]
+\item With \texttt{a=Logic5.ONE} and \texttt{b=Logic5.ONE} assigned via \texttt{Circuit.set\_pi}, \texttt{evaluate\_gate("AND",[ONE,ONE])} returns \texttt{GateEvalResult(good=1,faulty=1)}.
+\item \texttt{Circuit.evaluate\_gate} injects the stuck-at value on the faulty side to produce \texttt{Logic5.from\_pair(1,0)=Logic5.D}.
+\item Then \texttt{out = NOT(n1)} yields \texttt{NOT(D)=DBAR}, so a PO contains DBAR and \texttt{check\_test} succeeds.
+\end{itemize}
+
+\section{PODEM Algorithm: Formal Description and Pseudocode}
+
+\subsection{Search state and invariants}
+The PODEM search state is the partial five-valued assignment stored in \texttt{Circuit.values}. The algorithm relies on:
+\begin{itemize}[leftmargin=*]
+\item \texttt{Circuit.assign(net,value,stack)} to commit assignments while recording prior values for backtracking.
+\item A stack of pairs \texttt{(net, prev\_value)}; backtracking restores values using \texttt{undo\_to\_level(stack,circuit,level)}.
+\item \texttt{Circuit.reset()} to initialize all nets to X at the start of \texttt{podem}.
+\end{itemize}
+
+The key invariant ensured by \texttt{Circuit.assign} is:
+\begin{enumerate}[leftmargin=*]
+\item If a net already equals the requested value, the assignment is a no-op and returns true.
+\item If a net currently holds a non-X value and a different non-X value is requested, the assignment is rejected and returns false.
+\item Otherwise, an X can be refined to a non-X value, with the previous value pushed onto the stack for later reversal.
+\end{enumerate}
+Hence, the valuation remains consistent with the decisions on the current recursion path.
+
+\subsection{Algorithmic components mapped to code}
+The PODEM implementation in \texttt{atpg/podem.py} is organized around:
+\begin{itemize}[leftmargin=*]
+\item \texttt{check\_test(circuit)}: declares success when any PO is D or DBAR.
+\item \texttt{compute\_d\_frontier(circuit)}: returns gates with output X and at least one D/DBAR input.
+\item \texttt{objective(circuit,fault)}:
+  \begin{itemize}
+  \item If the fault net is in \{X,0,1\}, it chooses activation by setting the fault net opposite the stuck value.
+  \item Otherwise (fault net is D/DBAR), it chooses propagation by selecting the first D-frontier gate and assigning an X input to a non-controlling value (or X if undefined).
+  \end{itemize}
+\item \texttt{backtrace(circuit, net\_name, desired\_value)}:
+  \begin{itemize}
+  \item Recursively walks from a target net back toward a PI using \texttt{circuit.gate\_map[net\_name]}.
+  \item Accounts for inversion in NAND/NOR/NOT/XNOR through \texttt{inverted} and \texttt{invert\_value}.
+  \item Reduces to base types (AND, OR, XOR, NOT, BUF) to select a desired input value.
+  \item Prefers an X input for continued backtrace; otherwise defaults to the first input.
+  \end{itemize}
+\item \texttt{imply(circuit, pi\_name, pi\_value, fault, stack)}: assigns the PI, then evaluates all gates in \texttt{circuit.topo\_order} via \texttt{Circuit.evaluate\_gate} and assigns each output.
+\item The recursive search in \texttt{podem.recurse}: tries the computed PI value, then tries \texttt{invert\_value(pi\_val)}.
+\end{itemize}
+
+\subsection{Termination and untestable conditions}
+The recursion terminates under:
+\begin{itemize}[leftmargin=*]
+\item \textbf{Success:} \texttt{check\_test} returns true.
+\item \textbf{Abort:} timeout (\texttt{timeout\_s}) or a maximum recursion depth (\texttt{max\_depth}).
+\item \textbf{Untestable:}
+  \begin{enumerate}[leftmargin=*]
+  \item If the fault net is D/DBAR but \texttt{compute\_d\_frontier} is empty, the algorithm returns UNTESTABLE.
+  \item If \texttt{objective} raises \texttt{PodemAbort} (empty frontier or no X input on the selected frontier gate), it is caught and mapped to UNTESTABLE.
+  \item If both PI trials fail to produce detection, the branch concludes UNTESTABLE.
+  \end{enumerate}
+\end{itemize}
+
+\subsection{Pseudocode matching the implementation}
+The following pseudocode is written to mirror \texttt{atpg/podem.py}, including the fixed two-trial order and the D-frontier selection rule.
+
+\begin{lstlisting}[language={},caption={PODEM pseudocode matching atpg/podem.py}]
+function PODEM(circuit, fault, timeout_s, max_depth, verbose):
+  start_time <- now()
+  stack <- empty list
+  circuit.reset()
+
+  function timed_out():
+    return (timeout_s != None) and (now() - start_time > timeout_s)
+
+  function RECURSE(depth):
+    if timed_out(): return Result(ABORTED, reason="timeout", depth=depth)
+    if max_depth != None and depth > max_depth: return Result(ABORTED, reason="max_depth", depth=depth)
+
+    if CHECK_TEST(circuit):
+      tv <- VECTOR_FROM_VALUES(circuit.values, circuit.primary_inputs)
+      po <- {p: circuit.get_value(p) for p in circuit.primary_outputs}
+      return Result(DETECTED, test_vector=tv, po_observations=po, depth=depth)
+
+    fault_val <- circuit.get_value(fault.net)
+    if fault_val in {D, DBAR} and D_FRONTIER(circuit) is empty:
+      return Result(UNTESTABLE, depth=depth)
+
+    try:
+      (obj_net, obj_val) <- OBJECTIVE(circuit, fault)
+    except:
+      return Result(UNTESTABLE, depth=depth)
+
+    (pi_name, pi_val) <- BACKTRACE(circuit, obj_net, obj_val)
+
+    for trial in [pi_val, INVERT_VALUE(pi_val)]:
+      level <- len(stack)
+      ok <- IMPLY(circuit, pi_name, trial, fault, stack)
+      if not ok:
+        UNDO_TO_LEVEL(stack, circuit, level)
+        continue
+      if len(stack) == level:
+        continue
+
+      result <- RECURSE(depth + 1)
+      if result.status in {DETECTED, ABORTED}:
+        return result
+
+      UNDO_TO_LEVEL(stack, circuit, level)
+
+    return Result(UNTESTABLE, depth=depth)
+
+  result <- RECURSE(0)
+  if result.status != DETECTED:
+    result.test_vector <- VECTOR_FROM_VALUES(circuit.values, circuit.primary_inputs)
+    result.po_observations <- {p: circuit.get_value(p) for p in circuit.primary_outputs}
+  return result
+\end{lstlisting}
+
+\section{Implementation Deep Dive (Code-Driven)}
+
+\subsection{Circuit representation (\texttt{atpg/circuit.py})}
+
+\subsubsection{Gate representation and supported set}
+Gates are represented as immutable dataclass instances:
+\[
+\texttt{Gate(gate\_type: str,\ output: str,\ inputs: List[str])}.
+\]
+Supported gate types are enumerated in \texttt{SUPPORTED\_GATES} and validated during parsing in \texttt{parse\_bench}.
+
+\subsubsection{Net universe and initialization}
+The set of nets includes:
+\begin{itemize}[leftmargin=*]
+\item all PIs and POs,
+\item each gate output,
+\item and all gate input nets.
+\end{itemize}
+This is constructed in \texttt{Circuit.\_init\_values} by collecting a set of net names and initializing \texttt{self.values[net] = Logic5.X} for each. As a result, every referenced net has an entry in the valuation map, and \texttt{Circuit.get\_value} can treat absent keys as X.
+
+\subsubsection{Topological ordering and combinational enforcement}
+\texttt{Circuit.\_topological\_order} builds:
+\begin{itemize}[leftmargin=*]
+\item \texttt{outputs}, the set of all gate outputs (internal nodes),
+\item \texttt{incoming[gate.output]}, the count of gate inputs that are also gate outputs,
+\item \texttt{deps[inp]}, the list of gates that depend on \texttt{inp}.
+\end{itemize}
+It repeatedly removes ready gates with \texttt{incoming==0}, appends them to \texttt{order}, and decrements dependency counts for affected downstream gates. If \texttt{len(order) != len(self.gates)}, the circuit is treated as cyclic or sequential and rejected.
+
+This ordering is later consumed by \texttt{imply} to perform forward simulation in dependency-consistent order.
+
+\subsubsection{Assignment consistency and reversible search}
+\texttt{Circuit.assign(net, value, stack)} enforces:
+\begin{itemize}[leftmargin=*]
+\item If \texttt{prev is value}, it returns true without modifying the stack.
+\item If \texttt{prev} and \texttt{value} are both non-X and different, it returns false (a conflict).
+\item Otherwise, it pushes \texttt{(net, prev)} and writes \texttt{self.values[net]=value}, then returns true.
+\end{itemize}
+
+\paragraph{Consistency argument.}
+Along any recursion path, each assignment is either:
+\begin{enumerate}[leftmargin=*]
+\item redundant (same value), which preserves consistency,
+\item a refinement from X to a concrete symbol, consistent with X meaning unknown and concrete symbols meaning constraints,
+\item or an attempt to impose an incompatible concrete symbol, which is rejected.
+\end{enumerate}
+Thus \texttt{Circuit.values} remains a consistent partial assignment. Backtracking is exact: \texttt{undo\_to\_level} pops stack entries and restores \texttt{circuit.values[net]=prev}. Since each successful overwrite records the prior value, reversal reconstructs the exact earlier valuation.
+
+\subsubsection{Fault-aware evaluation}
+\texttt{Circuit.evaluate\_gate} combines lifted logic evaluation with single-site fault injection. It always computes \texttt{GateEvalResult} using \texttt{evaluate\_gate} and only overrides the faulty component when \texttt{gate.output} matches \texttt{fault.net}. Therefore the fault influences simulation at precisely one net and only when that net is produced during implication.
+
+\subsection{Parser (\texttt{atpg/parser\_bench.py})}
+
+\subsubsection{Format and regex definitions}
+The parser accepts a limited .bench syntax:
+\begin{itemize}[leftmargin=*]
+\item \texttt{INPUT(name)} via \texttt{\_INPUT\_RE}.
+\item \texttt{OUTPUT(name)} via \texttt{\_OUTPUT\_RE}.
+\item \texttt{out = GATETYPE(in1, in2, ...)} via \texttt{\_ASSIGN\_RE}.
+\end{itemize}
+Each line is normalized by \texttt{\_clean\_line}, which removes trailing comments after \texttt{\#} and trims whitespace.
+
+\subsubsection{Supported gates and arity checks}
+For assignment lines, \texttt{gate\_type} is uppercased and must lie in \texttt{SUPPORTED\_GATES}. Arity constraints are enforced:
+\begin{itemize}[leftmargin=*]
+\item NOT and BUF require exactly one input.
+\item All other gates require at least two inputs.
+\end{itemize}
+Invalid syntax triggers \texttt{BenchParseError}. Additionally, netlists lacking an OUTPUT are rejected, preventing circuits without observables.
+
+\subsubsection{Sufficiency and rejection behavior}
+This parsing subset suffices for the provided toy examples because they use only supported constructs. It rejects:
+\begin{itemize}[leftmargin=*]
+\item unsupported gate types,
+\item invalid arities,
+\item lines outside the accepted regex patterns,
+\item and netlists without OUTPUT declarations.
+\end{itemize}
+Together with the circuit model, this defines a small deterministic .bench subset suitable for combinational ATPG demonstrations.
+
+\subsection{Logic layer (\texttt{atpg/logic5.py})}
+
+\subsubsection{Paired semantics implementation}
+\texttt{Logic5.as\_pair} and \texttt{Logic5.from\_pair} implement the translation between the five symbols and paired values with unknowns. This enables explicit discrepancy symbols D and DBAR and is used throughout \texttt{evaluate\_gate}.
+
+\subsubsection{Gate evaluation and unknown handling}
+\texttt{evaluate\_gate} supports AND, OR, NAND, NOR, NOT, BUF, XOR, XNOR. NOT and BUF are implemented by consuming only the first input value; correctness relies on the parser enforcing arity, though \texttt{evaluate\_gate} itself simply stops after one value.
+
+For XOR and XNOR, unknown handling is strict: any \texttt{None} input yields \texttt{None} output on that side. This impacts PODEM: propagation through XOR requires resolving relevant inputs away from X, unlike AND/OR where controlling values can dominate even if some inputs are unknown.
+
+\subsubsection{Controlling and non-controlling values}
+\texttt{controlling\_value} and \texttt{non\_controlling\_value} define:
+\begin{itemize}[leftmargin=*]
+\item AND/NAND controlling: 0, non-controlling: 1.
+\item OR/NOR controlling: 1, non-controlling: 0.
+\item XOR non-controlling: 0; XNOR non-controlling: 1.
+\end{itemize}
+Only \texttt{non\_controlling\_value} is used by PODEM, specifically inside \texttt{objective} when choosing an assignment that propagates through a D-frontier gate. Note that \texttt{non\_controlling\_value} returns \texttt{None} for NOT and BUF and some other types; the objective code then falls back to X via \texttt{return inp, target\_value or Logic5.X}.
+
+\subsection{PODEM core (\texttt{atpg/podem.py})}
+
+\subsubsection{Narrative walk-through of recursion}
+The recursion \texttt{recurse(depth)} functions as the search engine:
+\begin{enumerate}[leftmargin=*]
+\item It first enforces timeout and maximum depth checks, returning ABORTED when violated.
+\item It tests for success via \texttt{check\_test}. On success it snapshots a PI-only test vector using \texttt{vector\_from\_values} and also captures PO observations.
+\item If the fault is activated (fault net is D/DBAR) but the D-frontier is empty, it immediately returns UNTESTABLE, matching the classic situation where discrepancy exists but cannot be observed.
+\item It computes an objective. If propagation is attempted with an empty D-frontier or with no X input on the selected frontier gate, \texttt{objective} raises \texttt{PodemAbort}, which is caught and mapped to UNTESTABLE.
+\item It backtraces the objective to a PI, then tries two assignments in order: the PI value returned by backtrace, followed by its complement using \texttt{invert\_value}.
+\item For each trial, it records the current stack length, runs implication (PI set plus full forward evaluation), recurses, and if that branch fails it backtracks using \texttt{undo\_to\_level}.
+\end{enumerate}
+
+\subsubsection{Heuristic choices and limitations}
+Several fixed heuristics appear in the code:
+\begin{itemize}[leftmargin=*]
+\item D-frontier selection always chooses the first gate: \texttt{gate = frontier[0]}.
+\item During propagation objective selection, it picks the first X input found by scanning \texttt{gate.inputs} in order.
+\item Backtrace prefers an X-valued input of the driving gate; when none exist, it recurses on the first input regardless of its current value.
+\item For XOR, backtrace assigns \texttt{desired\_in = target} in a simplified way, without incorporating full parity constraints across multiple inputs.
+\end{itemize}
+These choices primarily affect efficiency, and they can also trigger early UNTESTABLE outcomes via the specific \texttt{objective} failure modes (for example, ``No X input in D-frontier gate'').
+
+\subsection{CLI (\texttt{atpg/cli.py}) and usability}
+The CLI provides a \texttt{run} subcommand with:
+\texttt{--netlist}, \texttt{--fault}, \texttt{--timeout\_s}, \texttt{--max\_depth}, \texttt{--verbose}, \texttt{--json}.
+It parses the circuit using \texttt{parse\_bench\_file}, parses the fault via \texttt{Fault.parse}, enforces the fault targeting restriction, and executes \texttt{podem}.
+Output formats:
+\begin{itemize}[leftmargin=*]
+\item text mode: prints status, an optional reason, the PI test vector, and PO observations.
+\item JSON mode: prints \texttt{PodemResult.to\_json()}, which encodes \texttt{Logic5} symbols using \texttt{to\_char}.
+\end{itemize}
+Verbose mode does not currently produce a trace because \texttt{podem.py} contains \texttt{pass} under \texttt{if verbose}, and \texttt{PodemResult.trace} remains unset in the provided implementation.
+
+\subsection{Results object (\texttt{atpg/utils.py}) and missing metrics}
+\texttt{PodemResult} contains:
+\begin{itemize}[leftmargin=*]
+\item \texttt{status}, \texttt{test\_vector}, \texttt{po\_observations}, \texttt{depth}, \texttt{reason},
+\item optional \texttt{trace: list[str]},
+\item and optional counters \texttt{runtime\_ms}, \texttt{decisions}, \texttt{implications}, \texttt{backtracks}.
+\end{itemize}
+The JSON serializer includes all fields, with \texttt{trace} defaulting to an empty list.
+
+However, \texttt{podem} does not currently set \texttt{runtime\_ms} or any counters, and it does not populate a trace. The only time measurement is \texttt{start = time.monotonic()} for timeout checking, and no runtime duration is stored. Section~\ref{sec:instrumentation} specifies exact edits to populate these fields.
+
+\section{Worked Traces (Derived from Code Semantics)}
+
+This section presents stepwise traces that follow the precise control flow in \texttt{atpg/podem.py}, the evaluation rules in \texttt{atpg/logic5.py}, and the injection behavior in \texttt{Circuit.evaluate\_gate}. These traces are analytically derived; they are not claimed to be emitted logs.
+
+Notation:
+\begin{itemize}[leftmargin=*]
+\item $X$ denotes \texttt{Logic5.X}, $0$ denotes \texttt{ZERO}, $1$ denotes \texttt{ONE}.
+\item $D$ denotes \texttt{Logic5.D} and $DBAR$ denotes \texttt{Logic5.DBAR}.
+\item ``Frontier'' refers to the set returned by \texttt{compute\_d\_frontier}.
+\end{itemize}
+
+\subsection{Trace 1: toy1, fault n1/SA0 (DETECTED)}
+Toy1:
+\[
+n1 = AND(a,b),\quad out = NOT(n1).
+\]
+Fault: n1 stuck-at 0.
+
+Initially, all nets are X after \texttt{circuit.reset()}.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.12\textwidth}
+                  >{\raggedright\arraybackslash}p{0.22\textwidth}
+                  >{\raggedright\arraybackslash}p{0.16\textwidth}
+                  >{\raggedright\arraybackslash}p{0.20\textwidth}
+                  >{\raggedright\arraybackslash}p{0.18\textwidth}}
+\caption{Trace for toy1 with fault n1/SA0 following atpg/podem.py decisions.}\\
+\toprule
+Depth & Objective (net,value) & Backtrace (PI,value) & Key values after imply & D-frontier and outcome \\
+\midrule
+\endfirsthead
+\toprule
+Depth & Objective (net,value) & Backtrace (PI,value) & Key values after imply & D-frontier and outcome \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+
+0 &
+\texttt{objective}: fault net n1 is X, so desire 1 (opposite of SA0) &
+\texttt{backtrace}(n1,1): driver is AND, base AND, choose desired input 1. Prefer X input, pick \texttt{a}. Returns (a,1). &
+Trial 1: set a=1. Then imply evaluates n1=AND(1,X)=X and out=NOT(X)=X. Fault injection not effective because \texttt{result.good is None} at n1, so n1 stays X. POs: out=X. &
+D-frontier empty because no D/DBAR exists. \texttt{check\_test} false. Recurse to depth 1.\\
+
+1 &
+\texttt{objective}: fault net n1 is still X, desire 1 &
+\texttt{backtrace}(n1,1): now a=1, b is X, pick b. Returns (b,1). &
+Trial 1: set b=1. Imply: n1 good is AND(1,1)=1, inject stuck 0 gives n1=D. Then out=NOT(D)=DBAR. POs: out=DBAR. &
+\texttt{check\_test} true (PO has DBAR). Return DETECTED with test vector a=1,b=1.\\
+
+\end{longtable}
+
+This matches \texttt{tests/test\_podem\_small.py:test\_podem\_detects\_fault}, which asserts DETECTED and a=b=1 for fault n1/SA0 in the same structure.
+
+\subsection{Trace 2: toy2, fault n1/SA0 (UNTESTABLE)}
+Toy2:
+\[
+n1 = AND(a,b),\quad out = OR(n1,a).
+\]
+Fault: n1 stuck-at 0.
+
+The critical point is that activating n1 to 1 requires a=1 and b=1, but then out equals OR(n1,a)=1 in both circuits because input a=1 is controlling for OR. This corresponds to the masking behavior in \texttt{\_or} in \texttt{logic5.py}.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.12\textwidth}
+                  >{\raggedright\arraybackslash}p{0.22\textwidth}
+                  >{\raggedright\arraybackslash}p{0.16\textwidth}
+                  >{\raggedright\arraybackslash}p{0.20\textwidth}
+                  >{\raggedright\arraybackslash}p{0.18\textwidth}}
+\caption{Trace for toy2 with fault n1/SA0 highlighting activation without propagation.}\\
+\toprule
+Depth & Objective (net,value) & Backtrace (PI,value) & Key values after imply & D-frontier and outcome \\
+\midrule
+\endfirsthead
+\toprule
+Depth & Objective (net,value) & Backtrace (PI,value) & Key values after imply & D-frontier and outcome \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+
+0 &
+n1 is X so objective is (n1,1) &
+backtrace(n1,1) chooses PI a=1 (first X input) &
+Trial a=1: imply yields n1=AND(1,X)=X (no activation), out=OR(X,1)=1 (good and faulty both 1 because OR sees a=1 on both sides). &
+No D/DBAR exists. Recurse.\\
+
+1 &
+n1 still X so objective (n1,1) &
+backtrace(n1,1) chooses b=1 (remaining X input) &
+Trial b=1: imply yields n1 good AND(1,1)=1, injected stuck 0 gives n1=D. Then out = OR(D,1). On good side OR(1,1)=1; on faulty side OR(0,1)=1, so out=1. Thus no PO has D/DBAR. &
+Now fault net is D but D-frontier is empty because there is no gate with output X and fanin containing D/DBAR: out is not X, it is ONE. Therefore \texttt{if fault\_value in (D,DBAR) and not compute\_d\_frontier} triggers UNTESTABLE.\\
+
+\end{longtable}
+
+This corresponds to \texttt{tests/test\_podem\_small.py:test\_podem\_untestable\_fault} which expects UNTESTABLE for the same structure.
+
+\subsection{Trace 3: toy3, fault n1/SA0 (DETECTED) with XOR semantics}
+Toy3:
+\[
+n1 = XOR(a,b),\quad out = XOR(n1,c).
+\]
+Fault: n1 stuck-at 0.
+
+To activate, $g(n1)$ must be 1 so that injection yields $D=(1,0)$. Since XOR(a,b)=1 when a and b differ, one choice is $a=1,b=0$. Propagation through XOR(n1,c) requires c be known (not X) because \texttt{\_xor} returns None if any input is None. Taking $c=0$ gives out = XOR(D,0)=D, satisfying \texttt{check\_test}.
+
+The backtrace for XOR in the code uses \texttt{desired\_in = target} and prefers X inputs, so it typically assigns one PI per recursion level.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.12\textwidth}
+                  >{\raggedright\arraybackslash}p{0.22\textwidth}
+                  >{\raggedright\arraybackslash}p{0.16\textwidth}
+                  >{\raggedright\arraybackslash}p{0.20\textwidth}
+                  >{\raggedright\arraybackslash}p{0.18\textwidth}}
+\caption{Trace for toy3 with fault n1/SA0 emphasizing XOR unknown propagation.}\\
+\toprule
+Depth & Objective (net,value) & Backtrace (PI,value) & Key values after imply & D-frontier and outcome \\
+\midrule
+\endfirsthead
+\toprule
+Depth & Objective (net,value) & Backtrace (PI,value) & Key values after imply & D-frontier and outcome \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+
+0 &
+n1 is X so objective (n1,1) &
+backtrace(n1,1): driver XOR, base XOR, desired\_in = 1. Prefer X input, choose a. Returns (a,1). &
+Trial a=1: imply yields n1 = XOR(1,X)=X (because XOR sees unknown on good side), so injection yields X at n1 (good is None). out = XOR(X,X)=X. &
+No activation. Recurse.\\
+
+1 &
+n1 still X so objective (n1,1) &
+backtrace(n1,1): now a=1, b is X. Returns (b,1) under XOR rule desired\_in=1. &
+Trial b=1: imply yields n1 = XOR(1,1)=0, inject SA0 keeps faulty 0, so n1=0 (not activated). out = XOR(0,X)=X due to unknown c. &
+Not activated. Trial complement b=0: implies n1 good XOR(1,0)=1, inject stuck 0 yields n1=D. out = XOR(D,X)=X because c is X and XOR is strict about unknown.
+Fault activated but not observed. D-frontier exists? The gate out has output X and fanin contains D, so it is in D-frontier. Continue.\\
+
+2 &
+fault value is D so objective is propagation. compute\_d\_frontier returns [gate out = XOR(n1,c)]. objective picks first X input of out gate, which is c, and sets it to non-controlling value for XOR, which is 0. &
+backtrace(c,0) reaches PI immediately. Returns (c,0). &
+Trial c=0: imply yields out = XOR(D,0)=D. PO out is D. &
+\texttt{check\_test} true, DETECTED with vector a=1,b=0,c=0.\\
+
+\end{longtable}
+
+This aligns with \texttt{examples/README.md} suggesting that for toy3, n1/SA0 is detected with a=1, b=0, c=0, and it highlights the implementation-specific point that XOR blocks propagation when any input is X because \texttt{\_xor} returns None if any component is None.
+
+\section{Experimental Section: Real vs Planned}
+
+\subsection{Available artifacts and constraints}
+The earlier directory listing (outside this report) indicates files such as \texttt{artifacts/results.json}, \texttt{results.csv}, and \texttt{summary.json}. However, their contents are not included here, and \texttt{PodemResult.runtime\_ms} and related metrics are not produced by the provided \texttt{podem.py}. For that reason, this report does not present executed experimental numbers. The remainder of this section instead specifies a reproducible experiment plan using the available scripts.
+
+\subsection{Fault sweep method (planned)}
+The script \texttt{scripts/run\_faults.py} runs a sweep as follows:
+\begin{itemize}[leftmargin=*]
+\item Inputs: a list of netlists passed via \texttt{--netlists}.
+\item For each netlist, it parses the circuit, enumerates gate-output nets as \texttt{sorted(circuit.gate\_map.keys())}.
+\item For each gate-output net and each stuck value in \{0,1\}, it runs \texttt{podem} on a freshly parsed circuit and writes one JSON file \texttt{<netlist\_stem>\_<net>\_SA<sa>.json} into \texttt{--outdir} (default \texttt{artifacts/}).
+\end{itemize}
+
+The summarizer \texttt{scripts/summarize\_results.py} reads those JSON files (skipping \texttt{results.json} and \texttt{summary.json}), extracts metadata from the filenames, and outputs:
+\begin{itemize}[leftmargin=*]
+\item \texttt{artifacts/results.json}: a list of rows including file, netlist, net, fault, status, depth, and a string-form test vector.
+\item \texttt{artifacts/results.csv}: the same table as CSV.
+\item \texttt{artifacts/summary.json}: counts grouped by status and by netlist.
+\end{itemize}
+
+\subsection{Report rendering scripts (planned)}
+Two scripts generate LaTeX fragments:
+\begin{itemize}[leftmargin=*]
+\item \texttt{scripts/render\_results\_tex.py} loads \texttt{artifacts/results.json} and writes \texttt{report/artifacts/results.tex} as a compact \texttt{tabular} summary of netlist, net, fault, status, and depth. It requires \texttt{results.json} and otherwise exits with \texttt{"Run 'make examples' first"}; since the Makefile is not included here, this report avoids Make targets and instead provides direct Python commands in Section~\ref{sec:repro}.
+\item \texttt{scripts/render\_fault\_sweep\_tex.py} scans \texttt{artifacts/*.json} (excluding \texttt{results.json}) and writes:
+  \begin{itemize}
+  \item \texttt{report/artifacts/fault\_sweep\_summary.tex} with totals and averages.
+  \item \texttt{report/artifacts/fault\_sweep\_table.tex} containing a longtable with artifact name, status, test vector, PO obs, depth, runtime, backtracks.
+  \end{itemize}
+\end{itemize}
+Because runtime and backtracks are not emitted unless instrumentation is added, the longtable will show 0.0 runtime and 0 backtracks under the script's \texttt{\_as\_float} fallback rules.
+
+\subsection{Missing metrics and why they are missing}
+These metrics are absent because:
+\begin{itemize}[leftmargin=*]
+\item \texttt{podem.py} never assigns \texttt{PodemResult.runtime\_ms}.
+\item No counters are incremented for decisions, implications, or backtracks.
+\item Trace collection is stubbed out with \texttt{pass} under \texttt{if verbose}.
+\end{itemize}
+
+\subsection{Instrumenting the implementation}
+\label{sec:instrumentation}
+This subsection identifies exact insertion points consistent with the current structure.
+
+\paragraph{Runtime (ms).}
+In \texttt{podem}, after \texttt{result = recurse(0)}, compute:
+\[
+\texttt{runtime\_ms} = 1000.0 \cdot (\texttt{time.monotonic()} - \texttt{start}).
+\]
+Assign \texttt{result.runtime\_ms = runtime\_ms} before returning.
+
+\paragraph{Decisions.}
+Define a decision as each attempted PI trial assignment. In \texttt{recurse}, immediately before calling \texttt{imply} within:
+\texttt{for trial in (pi\_val, invert\_value(pi\_val))},
+increment \texttt{decisions += 1}, and store it into \texttt{PodemResult.decisions} at return.
+
+\paragraph{Implications.}
+Two definitions are plausible; this report adopts the code-grounded definition:
+\begin{itemize}[leftmargin=*]
+\item Count each gate evaluation during forward implication: in \texttt{imply}, inside \texttt{for gate in circuit.topo\_order}, increment \texttt{implications += 1} per gate.
+\end{itemize}
+This aligns directly with calls to \texttt{Circuit.evaluate\_gate} and subsequent assignment of gate outputs.
+
+\paragraph{Backtracks.}
+Count each individual net restoration as a backtrack. In \texttt{undo\_to\_level}, each \texttt{stack.pop()} restores one net. Increment \texttt{backtracks += 1} per pop. This counts state rewinds rather than recursion-level backtrack events.
+
+\paragraph{Trace.}
+Represent \texttt{PodemResult.trace} as a list of strings. A minimal consistent plan is to append records in \texttt{recurse} at:
+\begin{itemize}[leftmargin=*]
+\item after selecting the objective: record \texttt{depth}, \texttt{obj\_net}, \texttt{obj\_val},
+\item after backtrace: record \texttt{pi\_name}, \texttt{pi\_val},
+\item after implication: record \texttt{fault.net} and PO values via \texttt{circuit.get\_value},
+\item after computing D-frontier: record the frontier gate outputs,
+\item on each undo: record the undo to a specific stack level.
+\end{itemize}
+All required values are already available at these points without modifying the algorithm.
+
+\section{Reproducibility Cookbook}
+\label{sec:repro}
+
+This section provides copy-paste commands derived strictly from the repository scripts and module interfaces. No Make targets are assumed.
+
+\subsection{Run a single case via CLI}
+From repository root:
+\begin{lstlisting}[language=bash,caption={Single-case run using the CLI module entry.}]
+python -m atpg run --netlist examples/toy1.bench --fault n1/SA0
+python -m atpg run --netlist examples/toy2.bench --fault n1/SA0
+python -m atpg run --netlist examples/toy3.bench --fault n1/SA0
+\end{lstlisting}
+
+JSON output:
+\begin{lstlisting}[language=bash,caption={Single-case run with JSON output.}]
+python -m atpg run --netlist examples/toy1.bench --fault n1/SA0 --json
+\end{lstlisting}
+
+\subsection{Run all gate-output stuck-at faults on the toy netlists}
+\begin{lstlisting}[language=bash,caption={Fault sweep using scripts/run\_faults.py.}]
+python scripts/run_faults.py --netlists examples/toy1.bench examples/toy2.bench examples/toy3.bench --outdir artifacts
+\end{lstlisting}
+
+Summarize:
+\begin{lstlisting}[language=bash,caption={Summarize artifacts into results.json, results.csv, summary.json.}]
+python scripts/summarize_results.py
+\end{lstlisting}
+
+\subsection{Generate LaTeX tables from artifacts}
+\begin{lstlisting}[language=bash,caption={Render LaTeX fragments for the report.}]
+python scripts/render_results_tex.py
+python scripts/render_fault_sweep_tex.py
+python scripts/render_trace_tex.py
+\end{lstlisting}
+
+\section{Limitations and Future Work (Specific to This Code)}
+
+\subsection{Fault model limitations}
+\begin{itemize}[leftmargin=*]
+\item Only gate-output stuck-at faults are supported, enforced in \texttt{atpg/cli.py} through \texttt{fault.net in circuit.gate\_map}. This excludes PI faults and fanout branch faults. Adding branch faults would require explicit fanout-edge representation and injection on a selected branch rather than at the driver net.
+\item Only single faults are modeled; \texttt{Fault} represents a single site, and \texttt{Circuit.evaluate\_gate} injects only at one \texttt{fault.net}.
+\end{itemize}
+
+\subsection{Search heuristics}
+\begin{itemize}[leftmargin=*]
+\item D-frontier selection uses \texttt{frontier[0]} in \texttt{objective}. Alternative choices (for example, selecting gates closer to POs or with fewer unassigned inputs) are not implemented.
+\item The propagation objective assigns only one X input to a non-controlling value; it does not explore richer multi-input propagation strategies.
+\item \texttt{backtrace} uses a simplified rule for XOR: \texttt{desired\_in = target}, which ignores parity interactions with other known inputs and can increase search depth in XOR-heavy circuits.
+\end{itemize}
+
+\subsection{Implication engine}
+\begin{itemize}[leftmargin=*]
+\item Each implication performs a full pass over \texttt{circuit.topo\_order} (\texttt{imply} evaluates every gate). There is no event-driven simulation restricted to the affected fanout cone, so per-decision cost scales with total gate count.
+\item No learning, constraint caching, or conflict-driven pruning is implemented beyond the immediate conflicts detected by \texttt{Circuit.assign}.
+\end{itemize}
+
+\subsection{Metrics and traceability}
+\begin{itemize}[leftmargin=*]
+\item Even though \texttt{PodemResult} includes \texttt{runtime\_ms}, \texttt{decisions}, \texttt{implications}, \texttt{backtracks}, and \texttt{trace}, none are assigned in the provided \texttt{podem.py}. This limits experiment reporting; Section~\ref{sec:instrumentation} lists exact modifications to address this.
+\end{itemize}
+
+\appendix
+
+\section{Full Pseudocode with Invariants and Termination Proof Sketches}
+
+\subsection{Invariants}
+Invariant I1 (Consistency): For each net $n$, \texttt{Circuit.values[n]} is either X or a fixed concrete symbol, and no net holds two conflicting concrete symbols. This is enforced by the conflict check in \texttt{Circuit.assign}.
+
+Invariant I2 (Reversibility): After \texttt{undo\_to\_level(stack,circuit,level)}, the valuation matches exactly the valuation that existed when the stack length was \texttt{level}. This holds because each successful assignment records the overwritten value and \texttt{undo\_to\_level} restores in LIFO order.
+
+Invariant I3 (Topological implication correctness): In \texttt{imply}, gates are evaluated in \texttt{circuit.topo\_order}, which respects the dependency relation established by \texttt{\_topological\_order}. Therefore each gate reads input values that reflect the current valuation of its drivers.
+
+\subsection{Termination sketch}
+The recursion terminates because:
+\begin{itemize}[leftmargin=*]
+\item With \texttt{max\_depth}, recursion depth is explicitly bounded.
+\item Without a depth bound, the search space remains finite because each PI can be assigned at most one concrete value along any single path; however, the interaction with X and objectives that can return X complicates a strict bound. In practice, \texttt{timeout\_s} guarantees termination via \texttt{timed\_out}.
+\item Each recursion either detects, aborts, returns untestable via structural checks (such as activated fault with empty D-frontier), or explores the finite two-branch trial and backtracks.
+\end{itemize}
+
+\section{Derived Truth Tables for Five-Valued Logic}
+
+This appendix provides additional tables derived from paired semantics and the exact unknown-handling rules implemented in \texttt{atpg/logic5.py}.
+
+\subsection{Symbol to pair mapping}
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Symbol & Pair $(g,f)$ \\
+\midrule
+0 & (0,0) \\
+1 & (1,1) \\
+D & (1,0) \\
+DBAR & (0,1) \\
+X & ($\bot$,$\bot$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{AND table (subset emphasizing masking and unknowns)}
+\begin{center}
+\begin{tabular}{lllll}
+\toprule
+$\wedge$ & 0 & 1 & D & DBAR \\
+\midrule
+0 & 0 & 0 & 0 & 0 \\
+1 & 0 & 1 & D & DBAR \\
+D & 0 & D & D & 0 \\
+DBAR & 0 & DBAR & 0 & DBAR \\
+\bottomrule
+\end{tabular}
+\end{center}
+Entries follow from applying AND to good bits and faulty bits separately. For example,
+$D \wedge DBAR$ corresponds to $(1,0)\wedge(0,1)=(0,0)=0$.
+
+\subsection{OR table (subset emphasizing masking)}
+\begin{center}
+\begin{tabular}{lllll}
+\toprule
+$\vee$ & 0 & 1 & D & DBAR \\
+\midrule
+0 & 0 & 1 & D & DBAR \\
+1 & 1 & 1 & 1 & 1 \\
+D & D & 1 & D & 1 \\
+DBAR & DBAR & 1 & 1 & DBAR \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{XOR table (known-known cases)}
+\begin{center}
+\begin{tabular}{lllll}
+\toprule
+$\oplus$ & 0 & 1 & D & DBAR \\
+\midrule
+0 & 0 & 1 & D & DBAR \\
+1 & 1 & 0 & DBAR & D \\
+D & D & DBAR & 0 & 1 \\
+DBAR & DBAR & D & 1 & 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+If either input is X, the output becomes X in this implementation because \texttt{\_xor} returns \texttt{None} when any component is \texttt{None}.
+
+\subsection{XNOR}
+XNOR is implemented as NOT(XOR) in \texttt{evaluate\_gate}. Therefore, for known-known inputs, it is the symbol-level inversion of the XOR table:
+\[
+XNOR(a,b) = \texttt{invert\_value}(XOR(a,b))
+\]
+over \{0,1,D,DBAR\}.
+
+\section{Full Worked Traces (Verbatim-Style)}
+
+This appendix restates the three traces in a more log-like form aligned with the code phases.
+
+\subsection{toy1 n1/SA0}
+Initial: a=X, b=X, n1=X, out=X.
+\begin{verbatim}
+Depth 0:
+  check_test: out is X -> false
+  objective: fault_value(n1)=X -> objective (n1,1)
+  backtrace: n1 driven by AND, choose input a with desired 1 -> (a,1)
+  trial a=1:
+    imply: set a=1
+      eval n1=AND(1,X): result.good=None -> fault injection returns X
+      eval out=NOT(X) -> X
+    recurse
+
+Depth 1:
+  objective: fault_value(n1)=X -> objective (n1,1)
+  backtrace: choose b=1 -> (b,1)
+  trial b=1:
+    imply: set b=1
+      eval n1=AND(1,1): good=1 -> inject SA0 => D
+      eval out=NOT(D) => DBAR
+    check_test: out is DBAR -> true => DETECTED
+\end{verbatim}
+
+\subsection{toy2 n1/SA0}
+\begin{verbatim}
+Depth 0:
+  objective (n1,1)
+  backtrace -> (a,1)
+  trial a=1:
+    n1=AND(1,X)=X (injection blocked by unknown good)
+    out=OR(X,1)=1
+Depth 1:
+  objective (n1,1)
+  backtrace -> (b,1)
+  trial b=1:
+    n1=AND(1,1) good=1 -> inject SA0 => D
+    out=OR(D,1)=1 (OR masked by 1)
+  fault_value is D and D-frontier empty (out is not X) => UNTESTABLE
+\end{verbatim}
+
+\subsection{toy3 n1/SA0}
+\begin{verbatim}
+Depth 0:
+  objective (n1,1)
+  backtrace via XOR -> (a,1)
+  trial a=1:
+    n1=XOR(1,X)=X (unknown blocks)
+    out=XOR(X,X)=X
+Depth 1:
+  objective (n1,1)
+  backtrace -> (b,1) by XOR rule
+  trial b=1:
+    n1=XOR(1,1)=0 -> inject SA0 => 0 (not activated)
+  trial b=0:
+    n1=XOR(1,0)=1 -> inject SA0 => D (activated)
+    out=XOR(D,X)=X (unknown c blocks)
+Depth 2:
+  objective: propagate through D-frontier gate out=XOR(n1,c)
+  choose c=0 (non_controlling_value for XOR)
+  trial c=0:
+    out=XOR(D,0)=D -> DETECTED
+\end{verbatim}
+
+\section{CLI Reference and JSON Schema}
+
+\subsection{CLI usage}
+The entrypoint \texttt{python -m atpg} runs \texttt{atpg/\_\_main\_\_.py}, which calls \texttt{cli.main}. Supported subcommand:
+\begin{verbatim}
+python -m atpg run --netlist PATH --fault NET/SA0|NET/SA1 [--timeout_s T] [--max_depth D] [--verbose] [--json]
+\end{verbatim}
+
+\subsection{JSON schema}
+\texttt{PodemResult.to\_json} emits:
+\begin{verbatim}
+{
+  "status": "DETECTED" | "UNTESTABLE" | "ABORTED",
+  "test_vector": { "<pi>": "0"|"1"|"X"|"D"|"DBAR", ... },
+  "po_observations": { "<po>": "0"|"1"|"X"|"D"|"DBAR", ... },
+  "depth": <int>,
+  "reason": <string|null>,
+  "runtime_ms": <float|null>,
+  "decisions": <int|null>,
+  "implications": <int|null>,
+  "backtracks": <int|null>,
+  "trace": [ "<string>", ... ]
+}
+\end{verbatim}
+
+\section{File-by-File Explanation with Key Functions and Responsibilities}
+
+\begin{longtable}{p{0.22\textwidth} p{0.72\textwidth}}
+\toprule
+File & Responsibilities and key functions \\
+\midrule
+\endfirsthead
+\toprule
+File & Responsibilities and key functions \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+
+\texttt{atpg/circuit.py} &
+Defines \texttt{Gate}, \texttt{Circuit}, and the supported gate set. Builds \texttt{gate\_map}. Enforces combinational ordering with \texttt{\_topological\_order}. Maintains net valuations in \texttt{values}. Implements reversible assignment using \texttt{assign} and PI assignment via \texttt{set\_pi}. Evaluates gates and performs fault injection in \texttt{evaluate\_gate}. \\
+
+\texttt{atpg/logic5.py} &
+Defines the five-valued logic \texttt{Logic5} and pair conversion \texttt{as\_pair}/\texttt{from\_pair}. Implements unknown-aware operators \texttt{\_and}, \texttt{\_or}, \texttt{\_xor}, \texttt{\_invert}. Provides gate evaluation via \texttt{evaluate\_gate}. Supplies \texttt{non\_controlling\_value} and \texttt{invert\_value} used by PODEM. \\
+
+\texttt{atpg/fault.py} &
+Defines \texttt{Fault(net, stuck\_at)} and the parser \texttt{Fault.parse}. Restricts stuck values to SA0/SA1. \\
+
+\texttt{atpg/parser\_bench.py} &
+Parses .bench netlists into a \texttt{Circuit}. Enforces supported gate types and arity constraints. Strips comments and whitespace. Requires at least one OUTPUT declaration. \\
+
+\texttt{atpg/podem.py} &
+Implements the PODEM recursion: \texttt{objective}, \texttt{backtrace}, \texttt{imply}, \texttt{compute\_d\_frontier}, \texttt{check\_test}, \texttt{undo\_to\_level}. Produces a \texttt{PodemResult}. Includes timeout and max-depth checks. \\
+
+\texttt{atpg/cli.py} &
+Implements the CLI and the \texttt{run} subcommand. Validates that faults target gate outputs. Prints text output or JSON via \texttt{PodemResult.to\_json}. \\
+
+\texttt{atpg/utils.py} &
+Defines \texttt{PodemResult} and its JSON serialization. Contains placeholders for trace and metrics that are not populated by default. \\
+
+\texttt{scripts/run\_faults.py} &
+Enumerates all gate-output faults for specified netlists and runs \texttt{podem}. Writes one JSON artifact per fault. \\
+
+\texttt{scripts/summarize\_results.py} &
+Aggregates per-fault JSON artifacts into \texttt{results.json}, \texttt{results.csv}, and \texttt{summary.json}. \\
+
+\texttt{scripts/render\_results\_tex.py} &
+Generates a compact LaTeX results table from \texttt{artifacts/results.json}. \\
+
+\texttt{scripts/render\_fault\_sweep\_tex.py} &
+Generates a LaTeX summary plus a longtable from per-fault artifacts (excluding \texttt{results.json}). \\
+
+\texttt{scripts/render\_trace\_tex.py} &
+Wraps artifact trace text files into LaTeX verbatim blocks. The current PODEM does not automatically generate these traces. \\
+
+\texttt{tests/test\_logic5.py} &
+Checks masking and inversion behaviors for AND/OR/XOR/NOT on D/DBAR. \\
+
+\texttt{tests/test\_podem\_small.py} &
+Checks PODEM behavior on small circuits, including detected and untestable cases. \\
+
+\texttt{examples/*.bench} &
+Toy circuits used for demonstration and planned sweeps. \\
+
+\bottomrule
+\end{longtable}
+
+\section{Fault Sweep Table Format and Longtable Generation}
+
+The fault-sweep LaTeX longtable generated by \texttt{scripts/render\_fault\_sweep\_tex.py} contains:
+\begin{itemize}[leftmargin=*]
+\item \textbf{Artifact:} the per-fault JSON filename, escaped for TeX.
+\item \textbf{Status:} \texttt{DETECTED}, \texttt{UNTESTABLE}, or \texttt{ABORTED} from \texttt{PodemResult.status}.
+\item \textbf{Test vector:} a PI assignment string from \texttt{PodemResult.test\_vector}.
+\item \textbf{PO obs:} a PO observation string from \texttt{PodemResult.po\_observations}.
+\item \textbf{Depth:} \texttt{PodemResult.depth}.
+\item \textbf{Runtime(ms):} \texttt{PodemResult.runtime\_ms} when present, otherwise 0.0 via \texttt{\_as\_float}.
+\item \textbf{Backtracks:} \texttt{PodemResult.backtracks} when present, otherwise 0 via \texttt{\_as\_float}.
+\end{itemize}
+The summary fragment reports totals and averages of depth and runtime using the same numeric extraction.
+
+\end{document}

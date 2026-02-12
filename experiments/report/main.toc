@@ -1,0 +1,31 @@
+\contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
+\contentsline {section}{\numberline {2}Motivation}{3}{section.2}%
+\contentsline {section}{\numberline {3}Literature Review}{3}{section.3}%
+\contentsline {subsection}{\numberline {3.1}bipolar SPWM}{3}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Scalar V/f control and low-frequency boost}{3}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Digital motor control implementation}{3}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Research Gap}{4}{section.4}%
+\contentsline {section}{\numberline {5}Objectives}{4}{section.5}%
+\contentsline {section}{\numberline {6}Theory: Modulation and Scheduling}{4}{section.6}%
+\contentsline {subsection}{\numberline {6.1}bipolar SPWM formulation}{4}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Scalar V/f scheduling with boost}{4}{subsection.6.2}%
+\contentsline {section}{\numberline {7}Results and Discussion}{5}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Time-domain waveform evidence}{5}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Spectral characterization}{5}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Sweep evidence: V/f schedule and fundamental tracking}{6}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}Distortion and switching activity trends}{7}{subsection.7.4}%
+\contentsline {section}{\numberline {8}Fourier-Series Interpretation of the Line Voltage}{8}{section.8}%
+\contentsline {section}{\numberline {9}VLSI / RTL Implementation Oriented Design}{9}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Discrete-time realization and fixed-point signal model}{9}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Triangle carrier generator and carrier quantization relation}{9}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}Comparator-only PWM core (synthesizable)}{9}{subsection.9.3}%
+\contentsline {subsection}{\numberline {9.4}Dead-time insertion as a safety-critical FSM}{10}{subsection.9.4}%
+\contentsline {subsection}{\numberline {9.5}Vertical RTL datapath (layout-stable)}{11}{subsection.9.5}%
+\contentsline {subsection}{\numberline {9.6}Dead-time waveform evidence}{11}{subsection.9.6}%
+\contentsline {subsection}{\numberline {9.7}Area, timing, and bit-width planning}{12}{subsection.9.7}%
+\contentsline {section}{\numberline {10}Applications}{12}{section.10}%
+\contentsline {subsection}{\numberline {10.1}Induction motor control (scalar V/f drive)}{12}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}Electric vehicle motor drives}{13}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}Grid-connected inverter systems}{14}{subsection.10.3}%
+\contentsline {subsection}{\numberline {10.4}Active harmonic filtering}{15}{subsection.10.4}%
+\contentsline {section}{\numberline {11}Conclusion}{16}{section.11}%

@@ -68,3 +68,7 @@ clean:
 >rm -rf $(VENV) .pytest_cache __pycache__ artifacts
 >rm -f report/*.aux report/*.log report/*.out report/*.pdf
 >rm -rf report/artifacts
+
+# cd report
+# pdflatex -interaction=nonstopmode -halt-on-error main2.tex
+# pdflatex -interaction=nonstopmode -halt-on-error main2.tex
