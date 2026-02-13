@@ -1,0 +1,123 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldcontentsline\contentsline
+\gdef\contentsline#1#2#3#4{\oldcontentsline{#1}{#2}{#3}}
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\contentsline\oldcontentsline
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{3}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}System Architecture}{3}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Top Level Module Decomposition}{3}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Architectural Block Diagram}{3}{subsection.2.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Top level architecture with tick driven datapath and event coupling.}}{3}{figure.1}\protected@file@percent }
+\newlabel{fig:block_diagram}{{1}{3}{Top level architecture with tick driven datapath and event coupling}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Record and Frame Interfaces}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Simulation Generated Record Layout}{4}{subsection.2.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Historian record layout (fixed width payload).}}{4}{figure.2}\protected@file@percent }
+\newlabel{fig:record_layout}{{2}{4}{Historian record layout (fixed width payload)}{figure.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Methodology and RTL Style Modeling Approach}{4}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Deterministic Scheduling and Tick Semantics}{4}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Fixed Width Arithmetic and Saturations}{5}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Synthesizable Memory Structures}{5}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Sampling Theory and Timestamp Resolution}{5}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Sampling Period and Effective Rate}{5}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Timestamp Model and Bounded Jitter}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Fixed Point Filtering and Quantization Error}{5}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Moving Average Filter}{5}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Impulse Response and Group Delay}{6}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Quantization Noise Bounds}{6}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Synthesizable Datapath View of the Moving Average}{6}{subsection.5.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Synthesizable moving average datapath using subtract add accumulation and a circular buffer.}}{6}{figure.3}\protected@file@percent }
+\newlabel{fig:ma_datapath}{{3}{6}{Synthesizable moving average datapath using subtract add accumulation and a circular buffer}{figure.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Temperature raw vs filtered output (Q8.8 interpreted as Celsius).}}{6}{figure.4}\protected@file@percent }
+\newlabel{fig:temp_filt}{{4}{6}{Temperature raw vs filtered output (Q8.8 interpreted as Celsius)}{figure.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Moisture raw vs filtered output (Q8.8 interpreted as percent).}}{7}{figure.5}\protected@file@percent }
+\newlabel{fig:moist_filt}{{5}{7}{Moisture raw vs filtered output (Q8.8 interpreted as percent)}{figure.5}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Pressure raw vs filtered output (Q8.8 interpreted as kPa).}}{7}{figure.6}\protected@file@percent }
+\newlabel{fig:press_filt}{{6}{7}{Pressure raw vs filtered output (Q8.8 interpreted as kPa)}{figure.6}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Vibration raw vs filtered output (Q8.8 interpreted as arbitrary units).}}{7}{figure.7}\protected@file@percent }
+\newlabel{fig:vib_filt}{{7}{7}{Vibration raw vs filtered output (Q8.8 interpreted as arbitrary units)}{figure.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}FSM Design and Timing Behavior}{8}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}State Encoding and Transitions}{8}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Actuator Outputs and Safety}{8}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}State Diagram (Control FSM)}{8}{subsection.6.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Dryer control FSM state diagram (conditions match the simulation logic).}}{8}{figure.8}\protected@file@percent }
+\newlabel{fig:fsm_diagram}{{8}{8}{Dryer control FSM state diagram (conditions match the simulation logic)}{figure.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}FSM as a Synchronous Next-State Function}{8}{subsection.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Actuator Output Logic (Interpretation)}{8}{subsection.6.5}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces FSM state timeline at tick resolution.}}{9}{figure.9}\protected@file@percent }
+\newlabel{fig:fsm_timeline}{{9}{9}{FSM state timeline at tick resolution}{figure.9}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Actuator outputs driven by the control FSM.}}{9}{figure.10}\protected@file@percent }
+\newlabel{fig:actuators}{{10}{9}{Actuator outputs driven by the control FSM}{figure.10}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Alarm Debounce Derivation}{9}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Hysteresis and Debounce}{9}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Debounce as a Small Two-State FSM}{9}{subsection.7.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Debounced hysteresis latch interpreted as a two-state FSM with an $N$-tick counter.}}{9}{figure.11}\protected@file@percent }
+\newlabel{fig:debounce_fsm}{{11}{9}{Debounced hysteresis latch interpreted as a two-state FSM with an $N$-tick counter}{figure.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Event Detection}{10}{subsection.7.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {12}{\ignorespaces Alarm latch outputs and rising edge detections.}}{10}{figure.12}\protected@file@percent }
+\newlabel{fig:alarms}{{12}{10}{Alarm latch outputs and rising edge detections}{figure.12}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Historian Logger and FIFO Sizing}{10}{section.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Record Generation Rate}{10}{subsection.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}FIFO Circuit Sketch (Synthesizable View)}{10}{subsection.8.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {13}{\ignorespaces Historian FIFO modeled as circular memory with pointers and occupancy register.}}{10}{figure.13}\protected@file@percent }
+\newlabel{fig:fifo_circuit}{{13}{10}{Historian FIFO modeled as circular memory with pointers and occupancy register}{figure.13}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Packetizer and CRC Polynomial}{10}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Frame Format and CRC16}{10}{subsection.9.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {14}{\ignorespaces FIFO occupancy and record drops over time.}}{11}{figure.14}\protected@file@percent }
+\newlabel{fig:fifo}{{14}{11}{FIFO occupancy and record drops over time}{figure.14}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}CRC Bitwise Update as an LFSR (Circuit Perspective)}{11}{subsection.9.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {15}{\ignorespaces CRC16-CCITT modeled as an LFSR-like shift register with conditional XOR taps (conceptual circuit sketch).}}{11}{figure.15}\protected@file@percent }
+\newlabel{fig:crc_lfsr}{{15}{11}{CRC16-CCITT modeled as an LFSR-like shift register with conditional XOR taps (conceptual circuit sketch)}{figure.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.3}Embedded CRC Configuration and Validation Vectors}{12}{subsection.9.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {16}{\ignorespaces CRC configuration (embedded JSON).}}{12}{figure.16}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {17}{\ignorespaces CRC validation vectors (embedded CSV excerpt).}}{12}{figure.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}Protocol Multiplexer}{12}{section.10}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {18}{\ignorespaces Protocol multiplexer selection over time.}}{12}{figure.18}\protected@file@percent }
+\newlabel{fig:protocols}{{18}{12}{Protocol multiplexer selection over time}{figure.18}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {11}Streaming Handshake, Throughput, and Latency Bounds}{12}{section.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.1}Handshake Model}{12}{subsection.11.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.2}Packetizer Micro-FSM (Idle vs Sending)}{13}{subsection.11.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {19}{\ignorespaces Packetizer micro-FSM controlling start, byte transmission, and FIFO pop.}}{13}{figure.19}\protected@file@percent }
+\newlabel{fig:pkt_fsm}{{19}{13}{Packetizer micro-FSM controlling start, byte transmission, and FIFO pop}{figure.19}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {20}{\ignorespaces Valid and ready handshake behavior.}}{13}{figure.20}\protected@file@percent }
+\newlabel{fig:handshake}{{20}{13}{Valid and ready handshake behavior}{figure.20}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.3}Backpressure Adjusted Service Bound}{13}{subsection.11.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.4}Latency Definition and Measurement}{13}{subsection.11.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {21}{\ignorespaces Bytes transmitted per tick under backpressure.}}{14}{figure.21}\protected@file@percent }
+\newlabel{fig:throughput}{{21}{14}{Bytes transmitted per tick under backpressure}{figure.21}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {22}{\ignorespaces Latency histogram for periodic records (ticks).}}{14}{figure.22}\protected@file@percent }
+\newlabel{fig:lat_hist_p}{{22}{14}{Latency histogram for periodic records (ticks)}{figure.22}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {12}Verification Strategy and Determinism}{15}{section.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.1}Pseudo RTL Listings}{15}{subsection.12.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {1}Synthesizable Moving Average Update (Q8.8)}{15}{lstlisting.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {2}Debounced Latch with Hysteresis}{15}{lstlisting.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {3}CRC16 CCITT Bitwise Update}{15}{lstlisting.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {4}FIFO Push Pop Semantics}{15}{lstlisting.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13}Results and Discussion}{16}{section.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {13.1}Sensor Dynamics}{16}{subsection.13.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {23}{\ignorespaces Zoom: Temperature drift and vibration disturbance.}}{16}{figure.23}\protected@file@percent }
+\newlabel{fig:zoom1}{{23}{16}{Zoom: Temperature drift and vibration disturbance}{figure.23}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {24}{\ignorespaces Zoom: Moisture transient and control response.}}{16}{figure.24}\protected@file@percent }
+\newlabel{fig:zoom2}{{24}{16}{Zoom: Moisture transient and control response}{figure.24}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {25}{\ignorespaces Zoom: Vibration disturbance segment and system response.}}{17}{figure.25}\protected@file@percent }
+\newlabel{fig:zoom3}{{25}{17}{Zoom: Vibration disturbance segment and system response}{figure.25}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {13.2}Run Summary (Embedded)}{17}{subsection.13.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {26}{\ignorespaces Run summary (embedded JSON).}}{17}{figure.26}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {13.3}Configuration Metadata (Embedded)}{18}{subsection.13.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {27}{\ignorespaces Configuration metadata (embedded CSV).}}{18}{figure.27}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {13.4}Thresholds (Embedded)}{18}{subsection.13.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {28}{\ignorespaces Alarm thresholds (embedded CSV).}}{18}{figure.28}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14}Conclusion}{18}{section.14}\protected@file@percent }
+\gdef \@abspage@last{18}

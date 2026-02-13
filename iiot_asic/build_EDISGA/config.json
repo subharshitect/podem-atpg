@@ -1,0 +1,31 @@
+{
+  "byte_budget_per_tick": 40,
+  "crc16": {
+    "init_hex": "0xFFFF",
+    "poly_hex": "0x1021",
+    "refin": false,
+    "refout": false,
+    "xorout_hex": "0x0000"
+  },
+  "debounce_ticks": 3,
+  "duration_s": 240,
+  "fifo_depth": 256,
+  "frame_sync_hex": "a55a",
+  "high_press_clr_kpa": 132.0,
+  "high_press_set_kpa": 140.0,
+  "high_temp_clr_c": 90.0,
+  "high_temp_set_c": 95.0,
+  "high_vib_clr": 6.0,
+  "high_vib_set": 7.5,
+  "low_moist_clr_pct": 16.0,
+  "low_moist_set_pct": 12.0,
+  "ma_win": 8,
+  "oversample_m": 8,
+  "proto_switch_period_ticks": 50,
+  "ready_drop_prob": 0.08,
+  "record_bytes": 32,
+  "seed": 7,
+  "tick_ms": 100,
+  "ticks": 2400,
+  "title": "Event Driven Industrial Sensor Gateway ASIC (EDISGA)"
+}

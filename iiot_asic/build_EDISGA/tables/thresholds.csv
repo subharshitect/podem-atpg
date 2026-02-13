@@ -1,0 +1,9 @@
+signal,threshold
+HIGH_TEMP set,95.0 C
+HIGH_TEMP clear,90.0 C
+LOW_MOISTURE set,12.0 %
+LOW_MOISTURE clear,16.0 %
+HIGH_PRESSURE set,140.0 kPa
+HIGH_PRESSURE clear,132.0 kPa
+HIGH_VIBRATION set,7.50 a.u.
+HIGH_VIBRATION clear,6.00 a.u.

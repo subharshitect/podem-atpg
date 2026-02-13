@@ -1,0 +1,49 @@
+\contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
+\contentsline {section}{\numberline {2}System Architecture}{3}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Top Level Module Decomposition}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Architectural Block Diagram}{3}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Record and Frame Interfaces}{3}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}Simulation Generated Record Layout}{4}{subsection.2.4}%
+\contentsline {section}{\numberline {3}Methodology and RTL Style Modeling Approach}{4}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Deterministic Scheduling and Tick Semantics}{4}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Fixed Width Arithmetic and Saturations}{5}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Synthesizable Memory Structures}{5}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Sampling Theory and Timestamp Resolution}{5}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Sampling Period and Effective Rate}{5}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Timestamp Model and Bounded Jitter}{5}{subsection.4.2}%
+\contentsline {section}{\numberline {5}Fixed Point Filtering and Quantization Error}{5}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Moving Average Filter}{5}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Impulse Response and Group Delay}{6}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Quantization Noise Bounds}{6}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Synthesizable Datapath View of the Moving Average}{6}{subsection.5.4}%
+\contentsline {section}{\numberline {6}FSM Design and Timing Behavior}{8}{section.6}%
+\contentsline {subsection}{\numberline {6.1}State Encoding and Transitions}{8}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Actuator Outputs and Safety}{8}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}State Diagram (Control FSM)}{8}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}FSM as a Synchronous Next-State Function}{8}{subsection.6.4}%
+\contentsline {subsection}{\numberline {6.5}Actuator Output Logic (Interpretation)}{8}{subsection.6.5}%
+\contentsline {section}{\numberline {7}Alarm Debounce Derivation}{9}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Hysteresis and Debounce}{9}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Debounce as a Small Two-State FSM}{9}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Event Detection}{10}{subsection.7.3}%
+\contentsline {section}{\numberline {8}Historian Logger and FIFO Sizing}{10}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Record Generation Rate}{10}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}FIFO Circuit Sketch (Synthesizable View)}{10}{subsection.8.2}%
+\contentsline {section}{\numberline {9}Packetizer and CRC Polynomial}{10}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Frame Format and CRC16}{10}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}CRC Bitwise Update as an LFSR (Circuit Perspective)}{11}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}Embedded CRC Configuration and Validation Vectors}{12}{subsection.9.3}%
+\contentsline {section}{\numberline {10}Protocol Multiplexer}{12}{section.10}%
+\contentsline {section}{\numberline {11}Streaming Handshake, Throughput, and Latency Bounds}{12}{section.11}%
+\contentsline {subsection}{\numberline {11.1}Handshake Model}{12}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}Packetizer Micro-FSM (Idle vs Sending)}{13}{subsection.11.2}%
+\contentsline {subsection}{\numberline {11.3}Backpressure Adjusted Service Bound}{13}{subsection.11.3}%
+\contentsline {subsection}{\numberline {11.4}Latency Definition and Measurement}{13}{subsection.11.4}%
+\contentsline {section}{\numberline {12}Verification Strategy and Determinism}{15}{section.12}%
+\contentsline {subsection}{\numberline {12.1}Pseudo RTL Listings}{15}{subsection.12.1}%
+\contentsline {section}{\numberline {13}Results and Discussion}{16}{section.13}%
+\contentsline {subsection}{\numberline {13.1}Sensor Dynamics}{16}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}Run Summary (Embedded)}{17}{subsection.13.2}%
+\contentsline {subsection}{\numberline {13.3}Configuration Metadata (Embedded)}{18}{subsection.13.3}%
+\contentsline {subsection}{\numberline {13.4}Thresholds (Embedded)}{18}{subsection.13.4}%
+\contentsline {section}{\numberline {14}Conclusion}{18}{section.14}%

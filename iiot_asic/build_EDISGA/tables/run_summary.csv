@@ -1,0 +1,8 @@
+metric,value
+Total historian records attempted,2401
+Event records attempted,1
+FIFO drops (records),481
+Frames emitted,1665
+Total bytes transmitted,67158
+Average throughput (B/s),279.8
+Ticks with backpressure (ready=0),177

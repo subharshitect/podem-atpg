@@ -1,0 +1,29 @@
+# FILE: Makefile
+
+.PHONY: all sim report clean
+
+PY ?= python3
+TEX ?= pdflatex
+
+SEED ?= 7
+DURATION_S ?= 240
+
+# Unique build directory every run
+BUILD_ID := $(shell date +%Y%m%d_%H%M%S)_$$(printf "%04x" $$((RANDOM%65536)))_$$PPID
+OUTDIR := build_EDISGA_$(BUILD_ID)
+
+all: report
+
+sim:
+	@mkdir -p "$(OUTDIR)"
+	@$(PY) simulate_edisga.py --outdir "$(OUTDIR)" --seed "$(SEED)" --duration_s "$(DURATION_S)"
+
+report: sim
+	@$(TEX) -interaction=nonstopmode -halt-on-error -output-directory "$(OUTDIR)" \
+		"\def\builddir{$(OUTDIR)}\input{tex/main.tex}"
+	@$(TEX) -interaction=nonstopmode -halt-on-error -output-directory "$(OUTDIR)" \
+		"\def\builddir{$(OUTDIR)}\input{tex/main.tex}"
+	@echo "Built: $(OUTDIR)/report.pdf"
+
+clean:
+	@rm -rf build_EDISGA_* build_EDISGA

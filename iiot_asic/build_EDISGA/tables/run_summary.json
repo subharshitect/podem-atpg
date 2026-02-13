@@ -1,0 +1,26 @@
+{
+  "average_throughput_Bps": 279.825,
+  "event_records_attempted": 1,
+  "fifo_drops_records": 481,
+  "frames_emitted": 1665,
+  "latency_ticks": {
+    "event": {
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "n": 0,
+      "p95": 0.0
+    },
+    "periodic": {
+      "max": 382.0,
+      "mean": 272.13933933933936,
+      "min": 0.0,
+      "n": 1665,
+      "p95": 380.0
+    }
+  },
+  "records_attempted": 2401,
+  "ticks": 2400,
+  "ticks_with_backpressure_ready0": 177,
+  "total_bytes_transmitted": 67158
+}

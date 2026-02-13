@@ -1,0 +1,9 @@
+{
+  "init_hex": "0xFFFF",
+  "poly_hex": "0x1021",
+  "refin": false,
+  "refout": false,
+  "scope": "CRC computed over header + payload (SYNC excluded)",
+  "width": 16,
+  "xorout_hex": "0x0000"
+}

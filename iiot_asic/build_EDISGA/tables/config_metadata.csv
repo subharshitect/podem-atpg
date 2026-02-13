@@ -1,0 +1,15 @@
+parameter,value
+Project,Event Driven Industrial Sensor Gateway ASIC (EDISGA)
+Seed,7
+Tick period,100 ms
+Duration,240 s
+Total ticks,2400
+Oversampling M,8
+Moving average window W,8
+FIFO depth (records),256
+Byte budget per tick,40
+Protocol switch period (ticks),50
+CRC16 polynomial,0x1021 (CCITT)
+CRC16 init,0xFFFF
+Record bytes,32
+Frame SYNC,a55a

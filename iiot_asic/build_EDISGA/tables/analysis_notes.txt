@@ -1,0 +1,3 @@
+Run demonstrates event-driven and periodic logging over a 100 ms tick.
+Alarm edges trigger immediate event records with captured tick timestamps.
+FIFO occupancy rises during backpressure (ready deassertions); overflow behavior is explicit via drops.

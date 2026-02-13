@@ -1,0 +1,19 @@
+Record layout (fixed width payload)
+===================================
+
+ts_ms: u32 | timestamp in milliseconds
+fsm_state: u8 | FSM state id
+proto_id: u8 | protocol id
+alarms_mask: u16 | alarm latch bitfield
+temp_q88: i16 | temperature in Q8.8
+moist_q88: i16 | moisture in Q8.8
+press_q88: i16 | pressure in Q8.8
+vib_q88: i16 | vibration in Q8.8
+heater_en: u8 | heater enable
+fan_pwm: u8 | fan PWM (0..255)
+valve: u8 | valve state
+event_type: u8 | 0=periodic, 1=alarm_edge
+event_code: u16 | event code
+fifo_occ: u16 | fifo occupancy snapshot
+rsv0: u32 | reserved
+rsv1: u32 | reserved

@@ -1,0 +1,8 @@
+item,value
+width,16
+poly_hex,0x1021
+init_hex,0xFFFF
+refin,false
+refout,false
+xorout_hex,0x0000
+scope,CRC computed over header + payload (SYNC excluded)
